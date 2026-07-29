@@ -334,6 +334,8 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.sendSelectedCmd(protocol.CmdBackupIncr)
 		case "p", "P":
 			return m.sendSelectedCmd(protocol.CmdPing)
+		case "d", "D":
+			return m.toggleDownload()
 		case "tab":
 			m.screen = screenMain
 			m.tab = tabOverview
@@ -409,6 +411,8 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.sendSelectedCmd(protocol.CmdBackupIncr)
 	case "p", "P":
 		return m.sendSelectedCmd(protocol.CmdPing)
+	case "d", "D":
+		return m.toggleDownload()
 	}
 	return m, nil
 }
@@ -548,6 +552,44 @@ func (m tuiModel) jumpToClientName(name, hostname string) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.status = "Client not found."
+	return m, nil
+}
+
+func (m tuiModel) toggleDownload() (tea.Model, tea.Cmd) {
+	if m.panel.downloads == nil {
+		m.errMsg = "download server unavailable"
+		return m, nil
+	}
+	if m.panel.downloads.Active() {
+		m.panel.downloads.Stop()
+		m.errMsg = ""
+		m.status = "Download server stopped."
+		m.panel.log.Printf("TUI: download server stopped")
+		return m, nil
+	}
+	if m.screen != screenClient || len(m.backups) == 0 {
+		m.status = "Open a backup (Enter on a server) and select an archive, then press D."
+		return m, nil
+	}
+	if m.cursor < 0 || m.cursor >= len(m.backups) {
+		m.status = "Select a backup to download."
+		return m, nil
+	}
+	rec := m.backups[m.cursor]
+	url, started, err := m.panel.downloads.Toggle(rec)
+	if err != nil {
+		m.errMsg = err.Error()
+		m.status = "Download failed"
+		return m, nil
+	}
+	if !started {
+		m.errMsg = ""
+		m.status = "Download server stopped."
+		return m, nil
+	}
+	m.errMsg = ""
+	m.status = "DOWNLOAD  " + url
+	m.panel.log.Printf("TUI: download ready %s", url)
 	return m, nil
 }
 
@@ -894,7 +936,7 @@ func (m tuiModel) viewKeybinds(w int) string {
 	var kb string
 	switch {
 	case m.screen == screenClient:
-		kb = "  ↑/↓ backups   Esc back   B/I/Shift+B backup cmds   S settings   U refresh   ? help"
+		kb = "  ↑/↓ backups   Esc back   D download   B/I/Shift+B backup cmds   S settings   U refresh   ? help"
 	case m.tab == tabSettings:
 		kb = "  ↑/↓ select   Enter edit   Esc back   U refresh   ? help   Q quit"
 	default:
@@ -1241,6 +1283,12 @@ func (m tuiModel) viewClient(w, h int) string {
 	b.WriteString(styleDetailKey.Render("  ID    ") + "  " + c.ID + "\n")
 	b.WriteString(styleDetailKey.Render("  Chain ") + fmt.Sprintf("  %d archives · %s on disk · %d files in latest manifest\n",
 		m.selected.BackupCount, common.FormatBytes(m.selected.StoredBytes), len(c.Manifest)))
+	if m.panel != nil && m.panel.downloads != nil {
+		if active, url, _ := m.panel.downloads.Info(); active {
+			b.WriteString(styleFull.Render("  DOWNLOAD  ") + truncateW(url, maxInt(10, w-12)) + "\n")
+			b.WriteString(styleDim.Render("  Press D again to stop the download server.") + "\n")
+		}
+	}
 	b.WriteByte('\n')
 	b.WriteString(styleColHeader.Render(
 		fmt.Sprintf("  %-20s %-10s %-10s %-6s %-6s %s", "BACKUP ID", "TYPE", "SIZE", "FILES", "DEL", "CREATED"),
@@ -1248,6 +1296,11 @@ func (m tuiModel) viewClient(w, h int) string {
 	b.WriteString(strings.Repeat("─", w) + "\n")
 
 	headerUsed := 10
+	if m.panel != nil && m.panel.downloads != nil {
+		if active, _, _ := m.panel.downloads.Info(); active {
+			headerUsed = 12
+		}
+	}
 	listH := maxInt(1, h-headerUsed-2)
 	start := scrollStart(m.cursor, m.offset, listH)
 	shown := 0
@@ -1303,12 +1356,17 @@ func (m tuiModel) viewHelp(w, h int) string {
 		"    Shift+B      Backup full",
 		"    I            Backup incremental",
 		"    P            Ping agent",
+		"    D            Download selected backup (toggle HTTP server)",
 		"    S            Open Settings",
 		"    Esc          Leave Settings (or back from history)",
 		"    F            Find a client by name, host, or id",
 		"    U            Refresh",
 		"    Q            Quit (or leave Settings)",
 		"    ?            Help",
+		"",
+		"  Download (D on a backup row)",
+		"    Starts HTTP on a random port: http://PUBLIC_IP:PORT/UUID/FILENAME",
+		"    Public IP from ifconfig.com. Press D again to stop.",
 		"",
 		"  Settings extras",
 		"    Schedule time     Local HH:MM for auto backups (empty = any time)",
@@ -1331,6 +1389,11 @@ func (m tuiModel) viewHelp(w, h int) string {
 func (m tuiModel) statusLine(w int) string {
 	if m.errMsg != "" {
 		return styleErr.Render(truncateW(" ERROR: "+m.errMsg, w))
+	}
+	if m.panel != nil && m.panel.downloads != nil {
+		if active, url, _ := m.panel.downloads.Info(); active && url != "" {
+			return styleFull.Render(truncateW(" DOWNLOAD  "+url+"  (D to stop)", w))
+		}
 	}
 	return styleStatusOK.Render(truncateW(" "+m.status, w))
 }

@@ -16,11 +16,12 @@ import (
 
 // SSHPanel serves an interactive admin TUI over SSH.
 type SSHPanel struct {
-	store   *ConfigStore
-	storage *Storage
-	tasks   *TaskHub
-	peers   *PeerHub
-	log     *log.Logger
+	store     *ConfigStore
+	storage   *Storage
+	tasks     *TaskHub
+	peers     *PeerHub
+	downloads *DownloadHub
+	log       *log.Logger
 }
 
 func NewSSHPanel(store *ConfigStore, storage *Storage, tasks *TaskHub, peers *PeerHub, logger *log.Logger) *SSHPanel {
@@ -33,7 +34,14 @@ func NewSSHPanel(store *ConfigStore, storage *Storage, tasks *TaskHub, peers *Pe
 	if peers == nil {
 		peers = NewPeerHub()
 	}
-	return &SSHPanel{store: store, storage: storage, tasks: tasks, peers: peers, log: logger}
+	return &SSHPanel{
+		store:     store,
+		storage:   storage,
+		tasks:     tasks,
+		peers:     peers,
+		downloads: NewDownloadHub(logger),
+		log:       logger,
+	}
 }
 
 func (p *SSHPanel) ListenAndServe() error {
