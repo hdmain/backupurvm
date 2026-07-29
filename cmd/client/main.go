@@ -18,8 +18,9 @@ import (
 func main() {
 	connect := flag.String("connect", "", "host address ip:port")
 	keyPath := flag.String("key", "", "path to shared private key file")
-	full := flag.Bool("full", false, "force full backup")
-	incremental := flag.Bool("incremental", false, "force incremental backup")
+	once := flag.Bool("once", false, "run a single backup and exit (default: stay connected as agent)")
+	full := flag.Bool("full", false, "with --once: force full backup")
+	incremental := flag.Bool("incremental", false, "with --once: force incremental backup")
 	source := flag.String("source", "/root", "directory to backup")
 	compress := flag.String("compress", "", "zstd or gzip (default: host preference)")
 	name := flag.String("name", "", "client name (default: hostname)")
@@ -27,7 +28,7 @@ func main() {
 	flag.Parse()
 
 	if *connect == "" || *keyPath == "" {
-		fmt.Fprintf(os.Stderr, "usage: %s --connect host:port --key /path/to/key [--full|--incremental]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s --connect host:port --key /path/to/key [--once]\n", os.Args[0])
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
@@ -46,7 +47,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	err := client.Run(ctx, client.Options{
+	opts := client.Options{
 		Addr:       *connect,
 		KeyPath:    *keyPath,
 		SourceRoot: *source,
@@ -54,9 +55,21 @@ func main() {
 		Compress:   *compress,
 		ClientName: *name,
 		TempDir:    *tempDir,
+		Once:       *once,
 		Logger:     log.Default(),
-	})
-	if err != nil {
-		log.Fatalf("backup failed: %v", err)
 	}
+
+	if *once {
+		log.Printf("oneshot backup mode")
+		if err := client.RunOnce(ctx, opts); err != nil {
+			log.Fatalf("backup failed: %v", err)
+		}
+		return
+	}
+
+	log.Printf("agent mode — connected to %s, waiting for host commands (Ctrl+C to stop)", *connect)
+	if err := client.RunAgent(ctx, opts); err != nil && ctx.Err() == nil {
+		log.Fatalf("agent stopped: %v", err)
+	}
+	log.Printf("agent stopped")
 }

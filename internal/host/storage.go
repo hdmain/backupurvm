@@ -287,6 +287,62 @@ func (s *Storage) DiskUsage() (clients int, backups int, bytes int64, err error)
 	return clients, backups, bytes, nil
 }
 
+// ClientSummary is a client row with aggregate backup stats for the panel.
+type ClientSummary struct {
+	Client       ClientInfo
+	BackupCount  int
+	StoredBytes  int64
+	LastBackup   BackupRecord
+	LastMode     string
+}
+
+func (s *Storage) SummarizeClients() ([]ClientSummary, error) {
+	clients, err := s.ListClients()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ClientSummary, 0, len(clients))
+	for _, c := range clients {
+		recs, err := s.ListBackups(c.ID)
+		if err != nil {
+			continue
+		}
+		sum := ClientSummary{Client: c, BackupCount: len(recs)}
+		for _, r := range recs {
+			sum.StoredBytes += r.Bytes
+		}
+		if len(recs) > 0 {
+			sum.LastBackup = recs[0]
+			sum.LastMode = recs[0].Mode
+		}
+		out = append(out, sum)
+	}
+	return out, nil
+}
+
+// RecentBackups returns the newest backups across all clients (newest first).
+func (s *Storage) RecentBackups(limit int) ([]BackupRecord, error) {
+	clients, err := s.ListClients()
+	if err != nil {
+		return nil, err
+	}
+	var all []BackupRecord
+	for _, c := range clients {
+		recs, err := s.ListBackups(c.ID)
+		if err != nil {
+			continue
+		}
+		all = append(all, recs...)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].CreatedAt.After(all[j].CreatedAt)
+	})
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+
 func FormatBytes(n int64) string {
 	return common.FormatBytes(n)
 }

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/hdmain/backupurvm/internal/archive"
@@ -18,33 +19,78 @@ import (
 	"github.com/hdmain/tcpduplex/transfer"
 )
 
-// Options for a backup run.
+// Options for agent / oneshot client.
 type Options struct {
 	Addr       string
 	KeyPath    string
 	SourceRoot string
-	WantMode   string // auto|full|incremental
-	Compress   string // empty = host preference
+	WantMode   string // used by --once
+	Compress   string
 	ClientName string
 	TempDir    string
+	Once       bool // single backup then exit
 	Logger     *log.Logger
 }
 
-// Run connects to the host and performs one backup.
+// RunAgent connects and stays online, reconnecting until ctx is canceled.
+func RunAgent(ctx context.Context, opts Options) error {
+	if err := normalizeOpts(&opts); err != nil {
+		return err
+	}
+	backoff := time.Second
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := runSession(ctx, opts, protocol.RoleAgent)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		opts.Logger.Printf("disconnected: %v — reconnecting in %s", err, backoff)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+// RunOnce connects, performs one backup, disconnects.
+func RunOnce(ctx context.Context, opts Options) error {
+	if err := normalizeOpts(&opts); err != nil {
+		return err
+	}
+	if opts.WantMode == "" {
+		opts.WantMode = protocol.ModeAuto
+	}
+	return runSession(ctx, opts, protocol.RoleOneshot)
+}
+
+// Run is kept for compatibility: agent by default.
 func Run(ctx context.Context, opts Options) error {
+	if opts.Once {
+		return RunOnce(ctx, opts)
+	}
+	return RunAgent(ctx, opts)
+}
+
+func normalizeOpts(opts *Options) error {
 	if opts.Logger == nil {
 		opts.Logger = log.Default()
 	}
 	if opts.SourceRoot == "" {
 		opts.SourceRoot = "/root"
 	}
-	if opts.WantMode == "" {
-		opts.WantMode = protocol.ModeAuto
-	}
 	if opts.TempDir == "" {
 		opts.TempDir = os.TempDir()
 	}
+	return nil
+}
 
+func runSession(ctx context.Context, opts Options, role string) error {
 	key, err := os.ReadFile(opts.KeyPath)
 	if err != nil {
 		return fmt.Errorf("read key: %w", err)
@@ -73,8 +119,10 @@ func Run(ctx context.Context, opts Options) error {
 	if err := send(conn, protocol.TypeHello, protocol.Hello{
 		ClientName: name,
 		Hostname:   hostname,
-		Version:    "1.0.0",
+		Version:    "1.1.0",
 		KeyID:      common.KeyID(key),
+		Role:       role,
+		SourceRoot: opts.SourceRoot,
 	}); err != nil {
 		return err
 	}
@@ -85,7 +133,8 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	switch env.Type {
 	case protocol.TypeHelloOK:
-		// ok
+		ok, _ := protocol.DecodePayload[protocol.HelloOK](env)
+		opts.Logger.Printf("connected to host as %s (id=%s role=%s)", name, ok.ClientID, role)
 	case protocol.TypeHelloFail:
 		fail, _ := protocol.DecodePayload[protocol.HelloFail](env)
 		return fmt.Errorf("auth failed: %s", fail.Reason)
@@ -93,13 +142,130 @@ func Run(ctx context.Context, opts Options) error {
 		return fmt.Errorf("unexpected hello response: %s", env.Type)
 	}
 
+	if role == protocol.RoleOneshot {
+		return doBackup(ctx, conn, opts, opts.WantMode)
+	}
+	return agentLoop(ctx, conn, opts, name, hostname)
+}
+
+func agentLoop(ctx context.Context, conn *tcpduplex.Conn, opts Options, name, hostname string) error {
+	started := time.Now()
+	var (
+		mu         sync.Mutex
+		busy       bool
+		lastBackup time.Time
+	)
+
+	go func() {
+		t := time.NewTicker(20 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				mu.Lock()
+				if !busy {
+					_ = send(conn, protocol.TypeHeartbeat, protocol.Heartbeat{At: time.Now().UTC()})
+				}
+				mu.Unlock()
+			}
+		}
+	}()
+
+	for {
+		env, err := recvCtx(ctx, conn)
+		if err != nil {
+			return err
+		}
+		switch env.Type {
+		case protocol.TypeCommand:
+			cmd, err := protocol.DecodePayload[protocol.Command](env)
+			if err != nil {
+				return err
+			}
+			opts.Logger.Printf("host command: %s", cmd.Name)
+
+			mu.Lock()
+			if busy {
+				mu.Unlock()
+				_ = send(conn, protocol.TypeCommandAck, protocol.CommandAck{
+					ID: cmd.ID, Name: cmd.Name, OK: false, Message: "busy",
+				})
+				continue
+			}
+			busy = true
+			mu.Unlock()
+
+			_ = send(conn, protocol.TypeCommandAck, protocol.CommandAck{
+				ID: cmd.ID, Name: cmd.Name, OK: true, Message: "accepted",
+			})
+
+			switch cmd.Name {
+			case protocol.CmdPing:
+				_ = send(conn, protocol.TypeStatus, protocol.StatusReport{
+					ClientName: name,
+					Hostname:   hostname,
+					SourceRoot: opts.SourceRoot,
+					Busy:       false,
+					UptimeSec:  int64(time.Since(started).Seconds()),
+					LastBackup: lastBackup,
+					Message:    "pong",
+				})
+			case protocol.CmdStatus:
+				_ = send(conn, protocol.TypeStatus, protocol.StatusReport{
+					ClientName: name,
+					Hostname:   hostname,
+					SourceRoot: opts.SourceRoot,
+					Busy:       false,
+					UptimeSec:  int64(time.Since(started).Seconds()),
+					LastBackup: lastBackup,
+					Message:    "ok",
+				})
+			case protocol.CmdBackupAuto, protocol.CmdBackupFull, protocol.CmdBackupIncr:
+				mode := protocol.ModeAuto
+				switch cmd.Name {
+				case protocol.CmdBackupFull:
+					mode = protocol.ModeFull
+				case protocol.CmdBackupIncr:
+					mode = protocol.ModeIncremental
+				}
+				err := doBackup(ctx, conn, opts, mode)
+				if err != nil {
+					opts.Logger.Printf("backup failed: %v", err)
+				} else {
+					lastBackup = time.Now().UTC()
+					opts.Logger.Printf("backup finished")
+				}
+			default:
+				opts.Logger.Printf("unknown command %q", cmd.Name)
+			}
+
+			mu.Lock()
+			busy = false
+			mu.Unlock()
+
+		case protocol.TypeHeartbeat:
+			// ignore
+		default:
+			opts.Logger.Printf("unexpected message while idle: %s", env.Type)
+		}
+	}
+}
+
+func doBackup(ctx context.Context, conn *tcpduplex.Conn, opts Options, wantMode string) error {
+	if wantMode == "" {
+		wantMode = protocol.ModeAuto
+	}
+	hostname, _ := os.Hostname()
+
 	if err := send(conn, protocol.TypePlanReq, protocol.PlanReq{
-		WantMode:   opts.WantMode,
+		WantMode:   wantMode,
 		SourceRoot: opts.SourceRoot,
 	}); err != nil {
 		return err
 	}
-	env, err = recv(conn)
+	env, err := recvCtx(ctx, conn)
 	if err != nil {
 		return err
 	}
@@ -140,6 +306,14 @@ func Run(ctx context.Context, opts Options) error {
 		opts.Logger.Printf("incremental: %d changed, %d deleted (of %d total)", len(toPack), len(deleted), len(current))
 		if len(toPack) == 0 && len(deleted) == 0 {
 			opts.Logger.Printf("nothing to backup")
+			// Still notify host? Skip transfer — send a tiny empty? Better inform via status.
+			_ = send(conn, protocol.TypeStatus, protocol.StatusReport{
+				ClientName: opts.ClientName,
+				Hostname:   hostname,
+				SourceRoot: opts.SourceRoot,
+				Busy:       false,
+				Message:    "nothing to backup",
+			})
 			return nil
 		}
 	default:
@@ -195,7 +369,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err := send(conn, protocol.TypeBackupOffer, offer); err != nil {
 		return err
 	}
-	env, err = recv(conn)
+	env, err = recvCtx(ctx, conn)
 	if err != nil {
 		return err
 	}
@@ -218,7 +392,7 @@ func Run(ctx context.Context, opts Options) error {
 		return fmt.Errorf("transfer: %w", err)
 	}
 
-	env, err = recv(conn)
+	env, err = recvCtx(ctx, conn)
 	if err != nil {
 		return err
 	}
@@ -245,6 +419,14 @@ func send(conn *tcpduplex.Conn, typ string, payload any) error {
 
 func recv(conn *tcpduplex.Conn) (protocol.Envelope, error) {
 	msg, err := conn.Receive()
+	if err != nil {
+		return protocol.Envelope{}, err
+	}
+	return protocol.Decode(msg)
+}
+
+func recvCtx(ctx context.Context, conn *tcpduplex.Conn) (protocol.Envelope, error) {
+	msg, err := conn.ReceiveContext(ctx)
 	if err != nil {
 		return protocol.Envelope{}, err
 	}

@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -21,17 +22,27 @@ import (
 
 // BackupServer accepts tcpduplex clients and stores archives.
 type BackupServer struct {
-	store  *ConfigStore
+	store   *ConfigStore
 	storage *Storage
-	log    *log.Logger
+	tasks   *TaskHub
+	peers   *PeerHub
+	log     *log.Logger
 }
 
-func NewBackupServer(store *ConfigStore, storage *Storage, logger *log.Logger) *BackupServer {
+func NewBackupServer(store *ConfigStore, storage *Storage, tasks *TaskHub, peers *PeerHub, logger *log.Logger) *BackupServer {
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &BackupServer{store: store, storage: storage, log: logger}
+	if tasks == nil {
+		tasks = NewTaskHub()
+	}
+	if peers == nil {
+		peers = NewPeerHub()
+	}
+	return &BackupServer{store: store, storage: storage, tasks: tasks, peers: peers, log: logger}
 }
+
+func (s *BackupServer) Peers() *PeerHub { return s.peers }
 
 func (s *BackupServer) ListenAndServe(ctx context.Context) error {
 	cfg := s.store.Get()
@@ -70,18 +81,18 @@ func (s *BackupServer) ListenAndServe(ctx context.Context) error {
 
 			conn, err := tcpduplex.ServeConnContext(peerCtx, nc, tdCfg)
 			if err != nil {
-				s.log.Printf("handshake failed: %v", err)
+				s.log.Printf("handshake failed from %s: %v", nc.RemoteAddr(), err)
 				return
 			}
 			defer conn.Close()
-			if err := s.handlePeer(peerCtx, conn); err != nil {
+			if err := s.handlePeer(peerCtx, cancel, conn); err != nil {
 				s.log.Printf("peer error: %v", err)
 			}
 		}(nc)
 	}
 }
 
-func (s *BackupServer) handlePeer(ctx context.Context, conn *tcpduplex.Conn) error {
+func (s *BackupServer) handlePeer(ctx context.Context, cancel context.CancelFunc, conn *tcpduplex.Conn) error {
 	msg, err := conn.ReceiveContext(ctx)
 	if err != nil {
 		return err
@@ -99,24 +110,36 @@ func (s *BackupServer) handlePeer(ctx context.Context, conn *tcpduplex.Conn) err
 	}
 
 	cfg := s.store.Get()
-	wantID := common.KeyID([]byte(cfg.SharedKey))
-	if hello.KeyID != "" && hello.KeyID != wantID {
+	wantKey := common.KeyID([]byte(cfg.SharedKey))
+	if hello.KeyID != "" && hello.KeyID != wantKey {
 		_ = s.send(conn, protocol.TypeHelloFail, protocol.HelloFail{Reason: "key_id mismatch"})
 		return fmt.Errorf("key_id mismatch from %s", hello.Hostname)
 	}
 
-	clientID := wantID
 	if hello.ClientName == "" {
 		hello.ClientName = hello.Hostname
 	}
+	if hello.Role == "" {
+		hello.Role = protocol.RoleOneshot
+	}
+	clientID := ClientIdentity(hello.ClientName, hello.Hostname)
 	_ = s.storage.TouchClient(clientID, hello.ClientName, hello.Hostname)
+
 	if err := s.send(conn, protocol.TypeHelloOK, protocol.HelloOK{
 		ServerTime: time.Now().UTC(),
 		Message:    "ok",
+		ClientID:   clientID,
 	}); err != nil {
 		return err
 	}
 
+	if hello.Role == protocol.RoleAgent {
+		return s.handleAgent(ctx, cancel, conn, clientID, hello)
+	}
+	return s.handleOneshot(ctx, conn, clientID, hello)
+}
+
+func (s *BackupServer) handleOneshot(ctx context.Context, conn *tcpduplex.Conn, clientID string, hello protocol.Hello) error {
 	for {
 		msg, err := conn.ReceiveContext(ctx)
 		if err != nil {
@@ -148,11 +171,120 @@ func (s *BackupServer) handlePeer(ctx context.Context, conn *tcpduplex.Conn) err
 				_ = s.send(conn, protocol.TypeBackupFail, protocol.BackupFail{Reason: err.Error()})
 				return err
 			}
-			return nil // one backup per connection
+			return nil
 		default:
 			_ = s.send(conn, protocol.TypeError, protocol.ErrorMsg{Reason: "unexpected " + env.Type})
 			return fmt.Errorf("unexpected message %s", env.Type)
 		}
+	}
+}
+
+func (s *BackupServer) handleAgent(ctx context.Context, cancel context.CancelFunc, conn *tcpduplex.Conn, clientID string, hello protocol.Hello) error {
+	peer := &AgentPeer{
+		ID:         clientID,
+		Name:       hello.ClientName,
+		Hostname:   hello.Hostname,
+		SourceRoot: hello.SourceRoot,
+		conn:       conn,
+		cmdCh:      make(chan protocol.Command, 8),
+		cancel:     cancel,
+	}
+	s.peers.Register(peer)
+	s.log.Printf("agent online: %s (%s) id=%s", hello.ClientName, hello.Hostname, clientID)
+	defer func() {
+		s.peers.Unregister(clientID, peer)
+		s.log.Printf("agent offline: %s (%s)", hello.ClientName, hello.Hostname)
+	}()
+
+	for {
+		// Prefer queued host commands when idle.
+		if !peer.Busy {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case cmd := <-peer.cmdCh:
+				s.log.Printf("command → %s: %s", hello.ClientName, cmd.Name)
+				if err := s.send(conn, protocol.TypeCommand, cmd); err != nil {
+					return err
+				}
+				continue
+			default:
+			}
+		}
+
+		recvCtx, recvCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		msg, err := conn.ReceiveContext(recvCtx)
+		recvCancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if recvCtx.Err() == context.DeadlineExceeded {
+				continue
+			}
+			return err
+		}
+		s.peers.Touch(clientID)
+		env, err := protocol.Decode(msg)
+		if err != nil {
+			return err
+		}
+		if err := s.dispatchAgentMsg(ctx, conn, peer, clientID, hello, env); err != nil {
+			return err
+		}
+	}
+}
+
+func (s *BackupServer) dispatchAgentMsg(ctx context.Context, conn *tcpduplex.Conn, peer *AgentPeer, clientID string, hello protocol.Hello, env protocol.Envelope) error {
+	switch env.Type {
+	case protocol.TypeHeartbeat:
+		return nil
+	case protocol.TypeCommandAck:
+		ack, _ := protocol.DecodePayload[protocol.CommandAck](env)
+		s.log.Printf("command ack from %s: %s ok=%v %s", hello.ClientName, ack.Name, ack.OK, ack.Message)
+		return nil
+	case protocol.TypeStatus:
+		st, _ := protocol.DecodePayload[protocol.StatusReport](env)
+		s.log.Printf("status %s: busy=%v %s", hello.ClientName, st.Busy, st.Message)
+		s.peers.SetBusy(clientID, st.Busy)
+		peer.Busy = st.Busy
+		return nil
+	case protocol.TypePlanReq:
+		s.peers.SetBusy(clientID, true)
+		peer.Busy = true
+		req, err := protocol.DecodePayload[protocol.PlanReq](env)
+		if err != nil {
+			s.peers.SetBusy(clientID, false)
+			peer.Busy = false
+			return err
+		}
+		plan, err := s.buildPlan(clientID, req)
+		if err != nil {
+			s.peers.SetBusy(clientID, false)
+			peer.Busy = false
+			return err
+		}
+		return s.send(conn, protocol.TypePlan, plan)
+	case protocol.TypeBackupOffer:
+		offer, err := protocol.DecodePayload[protocol.BackupOffer](env)
+		if err != nil {
+			s.peers.SetBusy(clientID, false)
+			peer.Busy = false
+			return err
+		}
+		err = s.receiveBackup(ctx, conn, clientID, hello, offer)
+		s.peers.SetBusy(clientID, false)
+		peer.Busy = false
+		if err != nil {
+			_ = s.send(conn, protocol.TypeBackupFail, protocol.BackupFail{Reason: err.Error()})
+			// stay connected in agent mode
+			s.log.Printf("backup from %s failed: %v", hello.ClientName, err)
+			return nil
+		}
+		return nil
+	default:
+		s.log.Printf("agent %s unexpected message %s", hello.ClientName, env.Type)
+		return nil
 	}
 }
 
@@ -194,16 +326,20 @@ func (s *BackupServer) receiveBackup(ctx context.Context, conn *tcpduplex.Conn, 
 	if err != nil {
 		return err
 	}
-	_ = os.Remove(dest) // fresh receive; transfer.ReceiveFile resumes partials
+	_ = os.Remove(dest)
+
+	taskID := s.tasks.Start(hello.ClientName, offer.Hostname, offer.Mode, offer.SourceRoot, offer.BackupID, offer.ArchiveSize)
 
 	if err := s.send(conn, protocol.TypeBackupReady, protocol.BackupReady{
 		DestName: filepath.Base(dest),
 	}); err != nil {
+		s.tasks.Fail(taskID, err.Error())
 		return err
 	}
 
 	meta, err := transfer.ReceiveFile(ctx, conn, dest, &transfer.Options{
 		OnProgress: func(n, total int64) {
+			s.tasks.Progress(taskID, n, total)
 			if total > 0 && (n == total || n%(32<<20) < (1<<20)) {
 				s.log.Printf("recv %s %s/%s", offer.BackupID, common.FormatBytes(n), common.FormatBytes(total))
 			}
@@ -211,17 +347,20 @@ func (s *BackupServer) receiveBackup(ctx context.Context, conn *tcpduplex.Conn, 
 	})
 	if err != nil {
 		_ = os.Remove(dest)
+		s.tasks.Fail(taskID, err.Error())
 		return err
 	}
 
 	prev, _, err := s.storage.LatestManifest(clientID)
 	if err != nil {
+		s.tasks.Fail(taskID, err.Error())
 		return err
 	}
 	fullManifest := prev
 	if m, err := archive.ReadMeta(dest); err == nil {
 		fullManifest = applyArchiveMeta(offer.Mode, prev, m)
 	} else if offer.Mode == protocol.ModeFull {
+		s.tasks.Fail(taskID, err.Error())
 		return fmt.Errorf("read archive meta: %w", err)
 	}
 
@@ -253,6 +392,7 @@ func (s *BackupServer) receiveBackup(ctx context.Context, conn *tcpduplex.Conn, 
 		rec.CreatedAt = time.Now().UTC()
 	}
 	if err := s.storage.CommitBackup(rec, fullManifest); err != nil {
+		s.tasks.Fail(taskID, err.Error())
 		return err
 	}
 
@@ -261,6 +401,7 @@ func (s *BackupServer) receiveBackup(ctx context.Context, conn *tcpduplex.Conn, 
 		s.log.Printf("prune: %v", err)
 	}
 
+	s.tasks.Complete(taskID, rec.Bytes, fmt.Sprintf("%s %s", rec.Mode, common.FormatBytes(rec.Bytes)))
 	s.log.Printf("stored backup %s from %s (%s, %s)", rec.ID, hello.ClientName, rec.Mode, common.FormatBytes(rec.Bytes))
 	return s.send(conn, protocol.TypeBackupDone, protocol.BackupDone{
 		BackupID: rec.ID,
@@ -298,7 +439,12 @@ func (s *BackupServer) send(conn *tcpduplex.Conn, typ string, payload any) error
 	return conn.Send(b)
 }
 
-// KeyID is an alias for common.KeyID.
+// ClientIdentity returns a stable per-server id (not the shared key fingerprint).
+func ClientIdentity(name, hostname string) string {
+	sum := sha256.Sum256([]byte(name + "\x00" + hostname))
+	return hex.EncodeToString(sum[:16])
+}
+
 func KeyID(key []byte) string { return common.KeyID(key) }
 
 func newBackupID() string {

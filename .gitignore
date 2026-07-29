@@ -1,6 +1,27 @@
+# Build output
 /bin/
+/host
+/client
+
+# Runtime / secrets
 /data/
 /config.yml
+*.key
+
+# Archives
 *.tar.zst
 *.tar.gz
-*.key
+
+# Go / tooling
+*.exe
+*.test
+*.out
+coverage.out
+vendor/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store

@@ -47,8 +47,10 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	backupSrv := host.NewBackupServer(store, storage, log.Default())
-	panel := host.NewSSHPanel(store, storage, log.Default())
+	tasks := host.NewTaskHub()
+	peers := host.NewPeerHub()
+	backupSrv := host.NewBackupServer(store, storage, tasks, peers, log.Default())
+	panel := host.NewSSHPanel(store, storage, tasks, peers, log.Default())
 
 	errCh := make(chan error, 2)
 	go func() {
