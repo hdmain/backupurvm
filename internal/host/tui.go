@@ -42,12 +42,13 @@ type tuiModel struct {
 	prevTab   int // tab to restore when leaving Settings
 	screen    int
 
-	summaries []ClientSummary
-	recent    []BackupRecord
-	backups   []BackupRecord
-	settings  []settingRow
-	running   []Task
-	lastDone  *Task
+	summaries    []ClientSummary
+	archivedFrom int // first archived index in summaries; len(summaries) if none
+	recent       []BackupRecord
+	backups      []BackupRecord
+	settings     []settingRow
+	running      []Task
+	lastDone     *Task
 
 	overviewCursor int
 	cursor         int
@@ -119,6 +120,7 @@ func (m *tuiModel) reload() {
 		m.errMsg = ""
 	}
 	m.summaries = sums
+	m.partitionSummaries()
 	m.recent, _ = m.panel.storage.RecentBackups(12)
 	m.running = m.panel.tasks.Running()
 	m.lastDone = m.panel.tasks.LastCompleted()
@@ -151,8 +153,11 @@ func (m *tuiModel) reload() {
 		{Section: "Backup", Key: "key_id", Label: "Key fingerprint", Value: common.KeyID([]byte(cfg.SharedKey)), Editable: false},
 
 		{Section: "Auto backup", Key: "auto_backup", Label: "Enabled", Value: onOff(cfg.AutoBackup), Hint: "on or off", Editable: true},
-		{Section: "Auto backup", Key: "auto_backup_every", Label: "Interval", Value: cfg.AutoBackupEvery, Hint: "e.g. 1h, 6h, 24h (min 1m)", Editable: true},
+		{Section: "Auto backup", Key: "auto_backup_at", Label: "Schedule time", Value: scheduleTimeLabel(cfg.AutoBackupAt), Hint: "HH:MM local, or empty for any time", Editable: true},
+		{Section: "Auto backup", Key: "auto_backup_every", Label: "Interval", Value: cfg.AutoBackupEvery, Hint: "e.g. 1h, 6h, 24h, 3d (min 1m)", Editable: true},
 		{Section: "Auto backup", Key: "auto_backup_mode", Label: "Mode", Value: cfg.AutoBackupMode, Hint: "auto, full, or incremental", Editable: true},
+
+		{Section: "Servers", Key: "archive_offline_after", Label: "Archive offline after", Value: archiveAfterLabel(cfg.ArchiveOfflineAfter), Hint: "e.g. 3d, 72h — empty/0 = never", Editable: true},
 
 		{Section: "Network", Key: "listen_backup", Label: "Backup listen", Value: cfg.ListenBackup, Hint: "tcpduplex address", Editable: true},
 		{Section: "Network", Key: "listen_ssh", Label: "SSH panel listen", Value: cfg.ListenSSH, Hint: "restart host to apply", Editable: false},
@@ -517,10 +522,14 @@ func (m tuiModel) activate() (tea.Model, tea.Cmd) {
 			m.inputTI.SetValue(cfg.ListenBackup)
 		case "auto_backup":
 			m.inputTI.SetValue(onOff(cfg.AutoBackup))
+		case "auto_backup_at":
+			m.inputTI.SetValue(cfg.AutoBackupAt)
 		case "auto_backup_every":
 			m.inputTI.SetValue(cfg.AutoBackupEvery)
 		case "auto_backup_mode":
 			m.inputTI.SetValue(cfg.AutoBackupMode)
+		case "archive_offline_after":
+			m.inputTI.SetValue(cfg.ArchiveOfflineAfter)
 		}
 		m.screen = screenInput
 		m.inputTI.Focus()
@@ -662,11 +671,20 @@ func (m *tuiModel) applyInput(val string) error {
 			c.AutoBackup = on
 			return nil
 		})
+	case "auto_backup_at":
+		val = strings.TrimSpace(val)
+		if _, _, _, err := ParseClockHHMM(val); err != nil {
+			return err
+		}
+		return m.panel.store.Update(func(c *Config) error {
+			c.AutoBackupAt = val
+			return nil
+		})
 	case "auto_backup_every":
 		val = strings.TrimSpace(val)
-		d, err := time.ParseDuration(val)
+		d, err := ParseFlexibleDuration(val)
 		if err != nil {
-			return fmt.Errorf("invalid duration (use 1h, 6h, 24h…)")
+			return fmt.Errorf("invalid duration (use 1h, 6h, 24h, 3d…)")
 		}
 		if d < time.Minute {
 			return fmt.Errorf("interval must be at least 1m")
@@ -684,6 +702,15 @@ func (m *tuiModel) applyInput(val string) error {
 		}
 		return m.panel.store.Update(func(c *Config) error {
 			c.AutoBackupMode = val
+			return nil
+		})
+	case "archive_offline_after":
+		val = strings.TrimSpace(val)
+		if _, err := ParseFlexibleDuration(val); err != nil {
+			return fmt.Errorf("invalid duration (use 3d, 72h, or 0/empty)")
+		}
+		return m.panel.store.Update(func(c *Config) error {
+			c.ArchiveOfflineAfter = val
 			return nil
 		})
 	case "add_ssh_key":
@@ -707,6 +734,44 @@ func onOff(v bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+func scheduleTimeLabel(at string) string {
+	if strings.TrimSpace(at) == "" {
+		return "(any time)"
+	}
+	return at
+}
+
+func archiveAfterLabel(s string) string {
+	if strings.TrimSpace(s) == "" || s == "0" {
+		return "never"
+	}
+	return s
+}
+
+// partitionSummaries moves offline-too-long servers to the end and sets archivedFrom.
+func (m *tuiModel) partitionSummaries() {
+	online := m.panel.peers.OnlineIDs()
+	after, err := ParseFlexibleDuration(m.panel.store.Get().ArchiveOfflineAfter)
+	if err != nil {
+		after = 0
+	}
+	var active, archived []ClientSummary
+	now := time.Now()
+	for _, s := range m.summaries {
+		if _, on := online[s.Client.ID]; on {
+			active = append(active, s)
+			continue
+		}
+		if after > 0 && !s.Client.LastSeen.IsZero() && now.Sub(s.Client.LastSeen) >= after {
+			archived = append(archived, s)
+			continue
+		}
+		active = append(active, s)
+	}
+	m.summaries = append(active, archived...)
+	m.archivedFrom = len(active)
 }
 
 func parseOnOff(s string) (bool, error) {
@@ -832,7 +897,7 @@ func (m tuiModel) viewKeybinds(w int) string {
 	case m.tab == tabSettings:
 		kb = "  ↑/↓ select   Enter edit   Esc back   U refresh   ? help   Q quit"
 	default:
-		kb = "  ↑/↓ select   Enter open   B auto  Shift+B full  I incr  P ping   Tab views   S settings   F find   Q quit"
+		kb = "  ↑/↓ select   Enter open   B auto  Shift+B full  I incr  P ping   Tab views   S settings   F find   ? help   Q quit"
 	}
 	if lipgloss.Width(kb) < w {
 		kb += strings.Repeat(" ", w-lipgloss.Width(kb))
@@ -937,11 +1002,24 @@ func (m tuiModel) bodyOverview(w, h int) string {
 	}
 	shown := 0
 	seen := map[string]bool{}
-	if len(m.summaries) == 0 && len(online) == 0 {
+	activeN := m.archivedFrom
+	if activeN < 0 || activeN > len(m.summaries) {
+		activeN = len(m.summaries)
+	}
+	if activeN == 0 && len(online) == 0 {
 		b.WriteString(styleDim.Render("  (no servers — start: client --connect HOST:PORT --key KEY)") + "\n")
 		shown++
 	}
+	archivedHeaderPrinted := false
 	for i := serverStart; i < len(m.summaries) && shown < listH; i++ {
+		if i == m.archivedFrom && !archivedHeaderPrinted {
+			b.WriteString(styleCategory.Render("-- Archived ") + strings.Repeat("─", maxInt(0, w-14)) + "\n")
+			archivedHeaderPrinted = true
+			shown++
+			if shown >= listH {
+				break
+			}
+		}
 		s := m.summaries[i]
 		c := s.Client
 		seen[c.ID] = true
@@ -956,6 +1034,8 @@ func (m tuiModel) bodyOverview(w, h int) string {
 			} else {
 				status = "online"
 			}
+		} else if i >= m.archivedFrom {
+			status = "archive"
 		}
 		row := fmt.Sprintf("  %-8s %-16s %-14s %-8s %-10s %-8d %s",
 			status,
@@ -1026,7 +1106,16 @@ func (m tuiModel) bodyClients(w, h int) string {
 		shown = 3
 	}
 
+	archivedHeaderPrinted := false
 	for i := start; i < len(m.summaries) && shown < listH; i++ {
+		if i == m.archivedFrom && m.archivedFrom < len(m.summaries) && !archivedHeaderPrinted {
+			b.WriteString(styleCategory.Render("-- Archived ") + strings.Repeat("─", maxInt(0, w-14)) + "\n")
+			archivedHeaderPrinted = true
+			shown++
+			if shown >= listH {
+				break
+			}
+		}
 		s := m.summaries[i]
 		c := s.Client
 		mode := s.LastMode
@@ -1040,6 +1129,8 @@ func (m tuiModel) bodyClients(w, h int) string {
 			} else {
 				status = "online"
 			}
+		} else if i >= m.archivedFrom {
+			status = "archive"
 		}
 		row := fmt.Sprintf("  %-8s %-16s %-14s %-8s %-10s %-8d %-10s %d",
 			status,
@@ -1217,6 +1308,10 @@ func (m tuiModel) viewHelp(w, h int) string {
 		"    U            Refresh",
 		"    Q            Quit (or leave Settings)",
 		"    ?            Help",
+		"",
+		"  Settings extras",
+		"    Schedule time     Local HH:MM for auto backups (empty = any time)",
+		"    Archive offline   Move servers offline longer than this to Archived",
 		"",
 		"  Press any key to return.",
 	}

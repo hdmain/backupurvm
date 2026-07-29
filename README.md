@@ -67,6 +67,7 @@ ssh -p 2222 -o PreferredAuthentications=password -o PubkeyAuthentication=no admi
 | Enter | Open client / edit setting |
 | `b` / `B` / `i` | Backup auto / full / incremental |
 | `p` | Ping agent |
+| `?` | Help |
 | Tab | OVERVIEW ↔ CLIENTS |
 | S | Open Settings |
 | Esc | Leave Settings |
@@ -81,16 +82,21 @@ Set `ssh_password: ""` to disable password login (keys only).
 | Setting | Meaning |
 |---------|---------|
 | Enabled | `on` / `off` — schedule backups for all online agents |
-| Interval | Go duration, e.g. `1h`, `6h`, `24h` (minimum `1m`) |
+| Schedule time | Local `HH:MM` when backups run (empty = any time) |
+| Interval | Go duration, e.g. `1h`, `6h`, `24h`, `3d` (minimum `1m`) |
 | Mode | `auto`, `full`, or `incremental` |
 
 Or in `config.yml`:
 
 ```yaml
 auto_backup: true
-auto_backup_every: "6h"
+auto_backup_every: "24h"
+auto_backup_at: "03:00"
 auto_backup_mode: "auto"
+archive_offline_after: "3d"
 ```
+
+Servers offline longer than **Archive offline after** (Settings → Servers, default `3d`) move to an **Archived** section in OVERVIEW / CLIENTS. They return to the main list when they reconnect.
 
 Keep `config.yml` and `data/` out of git — both are ignored. Use `config.yml.example` as the template.
 

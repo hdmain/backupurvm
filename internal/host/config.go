@@ -29,10 +29,15 @@ type Config struct {
 	MaxBackupsPerClient int `yaml:"max_backups_per_client"`
 	// AutoBackup enables scheduled backups for all online agents.
 	AutoBackup bool `yaml:"auto_backup"`
-	// AutoBackupEvery is a Go duration string (e.g. 1h, 6h, 24h).
+	// AutoBackupEvery is a Go duration string (e.g. 1h, 6h, 24h). Also accepts Nd (days).
 	AutoBackupEvery string `yaml:"auto_backup_every"`
+	// AutoBackupAt is local HH:MM when backups should run (empty = any time / interval only).
+	AutoBackupAt string `yaml:"auto_backup_at"`
 	// AutoBackupMode is auto, full, or incremental.
 	AutoBackupMode string `yaml:"auto_backup_mode"`
+	// ArchiveOfflineAfter moves servers offline longer than this to the Archived list
+	// (e.g. 3d, 72h). Empty or 0 disables archiving.
+	ArchiveOfflineAfter string `yaml:"archive_offline_after"`
 }
 
 func DefaultConfig() Config {
@@ -46,9 +51,11 @@ func DefaultConfig() Config {
 		SSHAuthorizedKeys:   nil,
 		CompressPrefer:      "zstd",
 		MaxBackupsPerClient: 30,
-		AutoBackup:          false,
-		AutoBackupEvery:     "24h",
-		AutoBackupMode:      "auto",
+		AutoBackup:            false,
+		AutoBackupEvery:       "24h",
+		AutoBackupAt:          "03:00",
+		AutoBackupMode:        "auto",
+		ArchiveOfflineAfter:   "3d",
 	}
 }
 
@@ -118,6 +125,9 @@ func (s *ConfigStore) Load() error {
 	}
 	if cfg.AutoBackupMode == "" {
 		cfg.AutoBackupMode = def.AutoBackupMode
+	}
+	if cfg.ArchiveOfflineAfter == "" {
+		cfg.ArchiveOfflineAfter = def.ArchiveOfflineAfter
 	}
 	if cfg.SSHHostKeyPath == "" {
 		cfg.SSHHostKeyPath = filepath.Join(cfg.DataDir, "ssh_host_ed25519")

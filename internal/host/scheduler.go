@@ -10,7 +10,7 @@ import (
 )
 
 // RunAutoBackupScheduler periodically commands all online agents to back up
-// when Config.AutoBackup is enabled. Interval/mode are read live from ConfigStore.
+// when Config.AutoBackup is enabled. Interval/mode/time are read live from ConfigStore.
 func RunAutoBackupScheduler(ctx context.Context, store *ConfigStore, peers *PeerHub, logger *log.Logger) {
 	if logger == nil {
 		logger = log.Default()
@@ -29,12 +29,19 @@ func RunAutoBackupScheduler(ctx context.Context, store *ConfigStore, peers *Peer
 			if !cfg.AutoBackup {
 				continue
 			}
-			every, err := time.ParseDuration(strings.TrimSpace(cfg.AutoBackupEvery))
+			every, err := ParseFlexibleDuration(cfg.AutoBackupEvery)
 			if err != nil || every < time.Minute {
 				logger.Printf("auto backup: invalid interval %q (min 1m)", cfg.AutoBackupEvery)
 				continue
 			}
 			if !lastRun.IsZero() && time.Since(lastRun) < every {
+				continue
+			}
+			if _, _, _, err := ParseClockHHMM(cfg.AutoBackupAt); err != nil {
+				logger.Printf("auto backup: invalid schedule time %q (use HH:MM)", cfg.AutoBackupAt)
+				continue
+			}
+			if !scheduleTimeAllows(cfg.AutoBackupAt, time.Now()) {
 				continue
 			}
 			cmd := autoBackupCommand(cfg.AutoBackupMode)
@@ -46,6 +53,19 @@ func RunAutoBackupScheduler(ctx context.Context, store *ConfigStore, peers *Peer
 			lastRun = time.Now()
 		}
 	}
+}
+
+// scheduleTimeAllows is true when AutoBackupAt is empty, or local clock is in that minute.
+func scheduleTimeAllows(at string, now time.Time) bool {
+	hour, min, ok, err := ParseClockHHMM(at)
+	if err != nil {
+		return false
+	}
+	if !ok {
+		return true // empty = any time
+	}
+	local := now.Local()
+	return local.Hour() == hour && local.Minute() == min
 }
 
 func autoBackupCommand(mode string) string {
