@@ -39,9 +39,9 @@ type tuiModel struct {
 	width  int
 	height int
 
-	tab       int
-	prevTab   int // tab to restore when leaving Settings
-	screen    int
+	tab     int
+	prevTab int // tab to restore when leaving Settings
+	screen  int
 
 	summaries    []ClientSummary
 	archivedFrom int // first archived index in summaries; len(summaries) if none
@@ -65,11 +65,11 @@ type tuiModel struct {
 }
 
 type settingRow struct {
-	Key     string
-	Section string
-	Label   string
-	Value   string
-	Hint    string
+	Key      string
+	Section  string
+	Label    string
+	Value    string
+	Hint     string
 	Editable bool
 }
 
@@ -84,15 +84,15 @@ func newTUI(panel *SSHPanel, sess ssh.Session, width, height int) tuiModel {
 	ii.Prompt = "> "
 
 	m := tuiModel{
-		panel:  panel,
-		sess:   sess,
-		width:  maxInt(width, 60),
-		height: maxInt(height, 12),
-		tab:    tabOverview,
-		screen: screenMain,
-		findTI: fi,
+		panel:   panel,
+		sess:    sess,
+		width:   maxInt(width, 60),
+		height:  maxInt(height, 12),
+		tab:     tabOverview,
+		screen:  screenMain,
+		findTI:  fi,
 		inputTI: ii,
-		status: "Ready.",
+		status:  "Ready.",
 	}
 	m.reload()
 	return m
@@ -1449,8 +1449,10 @@ func (p *SSHPanel) runTUI(s ssh.Session) {
 		h = 24
 	}
 
-	// SSH writers are not local TTYs, so termenv/lipgloss otherwise strip
-	// colors (Ascii profile). Propagate the client TERM and force a color profile.
+	// SSH writers aren't local TTYs. Under systemd/screen the host process also
+	// has no TTY, so lipgloss package styles (bound at init) detect Ascii.
+	// Do NOT SetDefaultRenderer — that orphans those styles. Force a color
+	// profile on the existing default renderer they already reference.
 	term := ptyReq.Term
 	if term == "" {
 		term = "xterm-256color"
@@ -1463,17 +1465,10 @@ func (p *SSHPanel) runTUI(s ssh.Session) {
 	out := termenv.NewOutput(s,
 		termenv.WithEnvironment(sshEnv),
 		termenv.WithUnsafe(),
+		termenv.WithProfile(termenv.ANSI256),
 	)
-	lipgloss.SetDefaultRenderer(lipgloss.NewRenderer(s,
-		termenv.WithEnvironment(sshEnv),
-		termenv.WithUnsafe(),
-	))
-	// Prefer detected profile; never fall back to colorless Ascii over a PTY.
-	profile := out.EnvColorProfile()
-	if profile == termenv.Ascii {
-		profile = termenv.ANSI256
-	}
-	lipgloss.SetColorProfile(profile)
+	// Mutate the same renderer package styles were created with.
+	lipgloss.SetColorProfile(termenv.ANSI256)
 
 	m := newTUI(p, s, w, h)
 	prog := tea.NewProgram(m,

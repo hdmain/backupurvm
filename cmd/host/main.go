@@ -12,11 +12,17 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/hdmain/backupurvm/internal/common"
 	"github.com/hdmain/backupurvm/internal/host"
+	"github.com/muesli/termenv"
 )
 
 func main() {
+	// Host often runs under systemd/screen with no TTY; force colors so the
+	// SSH panel lipgloss styles (created at package init) aren't stuck on Ascii.
+	lipgloss.SetColorProfile(termenv.ANSI256)
+
 	configPath := flag.String("config", "config.yml", "path to host config")
 	flag.Parse()
 
