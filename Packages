@@ -1,4 +1,42 @@
 Package: backupurvm-client
+Version: 0.0.0+git.15056f3
+Architecture: amd64
+Maintainer: hdmain <noreply@github.com>
+Installed-Size: 3720
+Depends: systemd
+Filename: pool/main/backupurvm-client_0.0.0+git.15056f3_amd64.deb
+Size: 1427730
+MD5sum: 0574ae577db06f1c84474ac2eb72a711
+SHA1: 05df97ef7e566640c6a09a8b7243963e4de2ce53
+SHA256: bc68432a983674f061e7eba7c5074e46456999101a0f4e8dc11681945bd80320
+Section: admin
+Priority: optional
+Homepage: https://github.com/hdmain/backupurvm
+Description: backupurvm VPS backup agent
+ Long-running Linux agent that connects to a backupurvm host over
+ tcpduplex, waits for backup commands, and uploads /root (or configured
+ source) archives. Ships a systemd unit: backupurvm-client.service.
+
+Package: backupurvm-client
+Version: 0.0.0+git.15056f3
+Architecture: arm64
+Maintainer: hdmain <noreply@github.com>
+Installed-Size: 3592
+Depends: systemd
+Filename: pool/main/backupurvm-client_0.0.0+git.15056f3_arm64.deb
+Size: 1296776
+MD5sum: 200b13971b05d3d0c046495be2780324
+SHA1: 62760dfc593117a89cdbf7cff2241030cbef6339
+SHA256: 810e7c17fc82171c881e6b525ed3165052deec918c687a435d03f173f2234516
+Section: admin
+Priority: optional
+Homepage: https://github.com/hdmain/backupurvm
+Description: backupurvm VPS backup agent
+ Long-running Linux agent that connects to a backupurvm host over
+ tcpduplex, waits for backup commands, and uploads /root (or configured
+ source) archives. Ships a systemd unit: backupurvm-client.service.
+
+Package: backupurvm-client
 Version: 0.0.0+git.bf96cde
 Architecture: amd64
 Maintainer: hdmain <noreply@github.com>
