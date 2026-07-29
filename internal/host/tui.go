@@ -12,6 +12,7 @@ import (
 	"github.com/gliderlabs/ssh"
 	"github.com/hdmain/backupurvm/internal/common"
 	"github.com/hdmain/backupurvm/internal/protocol"
+	"github.com/muesli/termenv"
 )
 
 // Panel tabs for the main list screens. Settings opens via S, not Tab.
@@ -1448,11 +1449,38 @@ func (p *SSHPanel) runTUI(s ssh.Session) {
 		h = 24
 	}
 
+	// SSH writers are not local TTYs, so termenv/lipgloss otherwise strip
+	// colors (Ascii profile). Propagate the client TERM and force a color profile.
+	term := ptyReq.Term
+	if term == "" {
+		term = "xterm-256color"
+	}
+	environ := append(s.Environ(), "TERM="+term)
+	if !hasEnvKey(environ, "COLORTERM") {
+		environ = append(environ, "COLORTERM=truecolor")
+	}
+	sshEnv := sshEnviron(environ)
+	out := termenv.NewOutput(s,
+		termenv.WithEnvironment(sshEnv),
+		termenv.WithUnsafe(),
+	)
+	lipgloss.SetDefaultRenderer(lipgloss.NewRenderer(s,
+		termenv.WithEnvironment(sshEnv),
+		termenv.WithUnsafe(),
+	))
+	// Prefer detected profile; never fall back to colorless Ascii over a PTY.
+	profile := out.EnvColorProfile()
+	if profile == termenv.Ascii {
+		profile = termenv.ANSI256
+	}
+	lipgloss.SetColorProfile(profile)
+
 	m := newTUI(p, s, w, h)
 	prog := tea.NewProgram(m,
 		tea.WithInput(s),
-		tea.WithOutput(s),
+		tea.WithOutput(out),
 		tea.WithAltScreen(),
+		tea.WithEnvironment(environ),
 	)
 
 	go func() {
@@ -1464,4 +1492,29 @@ func (p *SSHPanel) runTUI(s ssh.Session) {
 	if _, err := prog.Run(); err != nil {
 		p.log.Printf("tui: %v", err)
 	}
+}
+
+// sshEnviron adapts a []string env list to termenv.Environ.
+type sshEnviron []string
+
+func (e sshEnviron) Environ() []string { return e }
+
+func (e sshEnviron) Getenv(key string) string {
+	prefix := key + "="
+	for _, kv := range e {
+		if strings.HasPrefix(kv, prefix) {
+			return kv[len(prefix):]
+		}
+	}
+	return ""
+}
+
+func hasEnvKey(environ []string, key string) bool {
+	prefix := key + "="
+	for _, e := range environ {
+		if strings.HasPrefix(e, prefix) {
+			return true
+		}
+	}
+	return false
 }
