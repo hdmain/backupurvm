@@ -17,9 +17,9 @@ configure)
 	if command -v systemctl >/dev/null 2>&1; then
 		systemctl daemon-reload || true
 		systemctl enable backupurvm-client.service >/dev/null 2>&1 || true
-		# Do not start automatically until the operator sets HOST/key.
-		echo "backupurvm-client: edit /etc/backupurvm/client.env and /etc/backupurvm/backup.key,"
-		echo "  then: sudo systemctl start backupurvm-client"
+		echo ""
+		echo "  Run:  sudo backupurvm-client init"
+		echo "  to configure host, shared key, and start the service."
 	fi
 	;;
 esac

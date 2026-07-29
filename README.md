@@ -16,14 +16,13 @@ sudo apt update
 sudo apt install backupurvm-client
 ```
 
-Then configure and start the systemd agent:
+Then run the interactive setup:
 
 ```bash
-sudo nano /etc/backupurvm/client.env   # BACKUPURVM_HOST, SOURCE, NAME
-sudo nano /etc/backupurvm/backup.key  # same secret as host shared_key
-sudo systemctl enable --now backupurvm-client
-sudo journalctl -u backupurvm-client -f
+sudo backupurvm-client init
 ```
+
+It asks for the host address and shared key, writes the config, and starts the systemd service.
 
 ## Requirements
 
