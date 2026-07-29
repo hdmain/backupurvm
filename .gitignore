@@ -1,0 +1,6 @@
+/bin/
+/data/
+/config.yml
+*.tar.zst
+*.tar.gz
+*.key

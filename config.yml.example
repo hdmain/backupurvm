@@ -1,0 +1,9 @@
+listen_backup: ":9090"
+listen_ssh: ":2222"
+data_dir: "./data"
+shared_key: "change-me-shared-key"
+ssh_password: "change-me-ssh-password"
+ssh_host_key_path: "./data/ssh_host_ed25519"
+ssh_authorized_keys: []
+compress_prefer: "zstd"
+max_backups_per_client: 30
