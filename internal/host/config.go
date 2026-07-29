@@ -27,6 +27,12 @@ type Config struct {
 	CompressPrefer string `yaml:"compress_prefer"`
 	// MaxBackupsPerClient keeps the newest N backups (0 = unlimited).
 	MaxBackupsPerClient int `yaml:"max_backups_per_client"`
+	// AutoBackup enables scheduled backups for all online agents.
+	AutoBackup bool `yaml:"auto_backup"`
+	// AutoBackupEvery is a Go duration string (e.g. 1h, 6h, 24h).
+	AutoBackupEvery string `yaml:"auto_backup_every"`
+	// AutoBackupMode is auto, full, or incremental.
+	AutoBackupMode string `yaml:"auto_backup_mode"`
 }
 
 func DefaultConfig() Config {
@@ -40,6 +46,9 @@ func DefaultConfig() Config {
 		SSHAuthorizedKeys:   nil,
 		CompressPrefer:      "zstd",
 		MaxBackupsPerClient: 30,
+		AutoBackup:          false,
+		AutoBackupEvery:     "24h",
+		AutoBackupMode:      "auto",
 	}
 }
 
@@ -103,6 +112,12 @@ func (s *ConfigStore) Load() error {
 	}
 	if cfg.CompressPrefer == "" {
 		cfg.CompressPrefer = def.CompressPrefer
+	}
+	if cfg.AutoBackupEvery == "" {
+		cfg.AutoBackupEvery = def.AutoBackupEvery
+	}
+	if cfg.AutoBackupMode == "" {
+		cfg.AutoBackupMode = def.AutoBackupMode
 	}
 	if cfg.SSHHostKeyPath == "" {
 		cfg.SSHHostKeyPath = filepath.Join(cfg.DataDir, "ssh_host_ed25519")

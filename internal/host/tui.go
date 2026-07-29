@@ -150,6 +150,10 @@ func (m *tuiModel) reload() {
 		{Section: "Backup", Key: "data_dir", Label: "Data directory", Value: cfg.DataDir, Editable: false},
 		{Section: "Backup", Key: "key_id", Label: "Key fingerprint", Value: common.KeyID([]byte(cfg.SharedKey)), Editable: false},
 
+		{Section: "Auto backup", Key: "auto_backup", Label: "Enabled", Value: onOff(cfg.AutoBackup), Hint: "on or off", Editable: true},
+		{Section: "Auto backup", Key: "auto_backup_every", Label: "Interval", Value: cfg.AutoBackupEvery, Hint: "e.g. 1h, 6h, 24h (min 1m)", Editable: true},
+		{Section: "Auto backup", Key: "auto_backup_mode", Label: "Mode", Value: cfg.AutoBackupMode, Hint: "auto, full, or incremental", Editable: true},
+
 		{Section: "Network", Key: "listen_backup", Label: "Backup listen", Value: cfg.ListenBackup, Hint: "tcpduplex address", Editable: true},
 		{Section: "Network", Key: "listen_ssh", Label: "SSH panel listen", Value: cfg.ListenSSH, Hint: "restart host to apply", Editable: false},
 
@@ -511,6 +515,12 @@ func (m tuiModel) activate() (tea.Model, tea.Cmd) {
 			m.inputTI.SetValue(fmt.Sprintf("%d", cfg.MaxBackupsPerClient))
 		case "listen_backup":
 			m.inputTI.SetValue(cfg.ListenBackup)
+		case "auto_backup":
+			m.inputTI.SetValue(onOff(cfg.AutoBackup))
+		case "auto_backup_every":
+			m.inputTI.SetValue(cfg.AutoBackupEvery)
+		case "auto_backup_mode":
+			m.inputTI.SetValue(cfg.AutoBackupMode)
 		}
 		m.screen = screenInput
 		m.inputTI.Focus()
@@ -643,6 +653,39 @@ func (m *tuiModel) applyInput(val string) error {
 			c.ListenBackup = val
 			return nil
 		})
+	case "auto_backup":
+		on, err := parseOnOff(val)
+		if err != nil {
+			return err
+		}
+		return m.panel.store.Update(func(c *Config) error {
+			c.AutoBackup = on
+			return nil
+		})
+	case "auto_backup_every":
+		val = strings.TrimSpace(val)
+		d, err := time.ParseDuration(val)
+		if err != nil {
+			return fmt.Errorf("invalid duration (use 1h, 6h, 24h…)")
+		}
+		if d < time.Minute {
+			return fmt.Errorf("interval must be at least 1m")
+		}
+		return m.panel.store.Update(func(c *Config) error {
+			c.AutoBackupEvery = val
+			return nil
+		})
+	case "auto_backup_mode":
+		val = strings.ToLower(strings.TrimSpace(val))
+		switch val {
+		case protocol.ModeAuto, protocol.ModeFull, protocol.ModeIncremental:
+		default:
+			return fmt.Errorf("use auto, full, or incremental")
+		}
+		return m.panel.store.Update(func(c *Config) error {
+			c.AutoBackupMode = val
+			return nil
+		})
 	case "add_ssh_key":
 		val = strings.TrimSpace(val)
 		if val == "" {
@@ -657,6 +700,24 @@ func (m *tuiModel) applyInput(val string) error {
 		})
 	}
 	return nil
+}
+
+func onOff(v bool) string {
+	if v {
+		return "on"
+	}
+	return "off"
+}
+
+func parseOnOff(s string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "on", "true", "1", "yes", "enabled":
+		return true, nil
+	case "off", "false", "0", "no", "disabled":
+		return false, nil
+	default:
+		return false, fmt.Errorf("use on or off")
+	}
 }
 
 func (m *tuiModel) ensureVisible(n int) {

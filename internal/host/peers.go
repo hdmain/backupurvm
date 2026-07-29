@@ -153,3 +153,30 @@ func (h *PeerHub) SendCommandByName(nameOrHost, cmdName string) error {
 	}
 	return fmt.Errorf("server not connected")
 }
+
+// BroadcastCommand sends cmdName to every online, non-busy agent.
+// Returns how many peers accepted the command.
+func (h *PeerHub) BroadcastCommand(cmdName string) (sent int, skipped int) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, p := range h.peers {
+		if !p.Online {
+			continue
+		}
+		if p.Busy {
+			skipped++
+			continue
+		}
+		cmd := protocol.Command{
+			ID:   fmt.Sprintf("%d", time.Now().UnixNano()),
+			Name: cmdName,
+		}
+		select {
+		case p.cmdCh <- cmd:
+			sent++
+		default:
+			skipped++
+		}
+	}
+	return sent, skipped
+}

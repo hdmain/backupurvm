@@ -7,3 +7,6 @@ ssh_host_key_path: "./data/ssh_host_ed25519"
 ssh_authorized_keys: []
 compress_prefer: "zstd"
 max_backups_per_client: 30
+auto_backup: false
+auto_backup_every: "24h"
+auto_backup_mode: "auto"

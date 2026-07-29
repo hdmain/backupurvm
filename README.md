@@ -57,6 +57,22 @@ ssh -p 2222 -o PreferredAuthentications=password -o PubkeyAuthentication=no admi
 
 Set `ssh_password: ""` to disable password login (keys only).
 
+### Auto backup (Settings → Auto backup)
+
+| Setting | Meaning |
+|---------|---------|
+| Enabled | `on` / `off` — schedule backups for all online agents |
+| Interval | Go duration, e.g. `1h`, `6h`, `24h` (minimum `1m`) |
+| Mode | `auto`, `full`, or `incremental` |
+
+Or in `config.yml`:
+
+```yaml
+auto_backup: true
+auto_backup_every: "6h"
+auto_backup_mode: "auto"
+```
+
 Keep `config.yml` and `data/` out of git — both are ignored. Use `config.yml.example` as the template.
 
 ## Client

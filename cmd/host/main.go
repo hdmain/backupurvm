@@ -52,6 +52,8 @@ func main() {
 	backupSrv := host.NewBackupServer(store, storage, tasks, peers, log.Default())
 	panel := host.NewSSHPanel(store, storage, tasks, peers, log.Default())
 
+	go host.RunAutoBackupScheduler(ctx, store, peers, log.Default())
+
 	errCh := make(chan error, 2)
 	go func() {
 		errCh <- backupSrv.ListenAndServe(ctx)
