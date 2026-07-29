@@ -1,14 +1,33 @@
 Package: backupurvm-client
-Version: 0.1.0
+Version: 0.0.0+git.bf96cde
+Architecture: amd64
+Maintainer: hdmain <noreply@github.com>
+Installed-Size: 3620
+Depends: systemd
+Filename: pool/main/backupurvm-client_0.0.0+git.bf96cde_amd64.deb
+Size: 1388964
+MD5sum: dfbe524b91a3724fa979ca7860f5d0d7
+SHA1: b6ed94e7a8702bb94231c38e261ef77bdc7d7ce6
+SHA256: b1869338d598705c1531a05eb291a2ccdb04f61068dc1e75606dcdc3c9067a90
+Section: admin
+Priority: optional
+Homepage: https://github.com/hdmain/backupurvm
+Description: backupurvm VPS backup agent
+ Long-running Linux agent that connects to a backupurvm host over
+ tcpduplex, waits for backup commands, and uploads /root (or configured
+ source) archives. Ships a systemd unit: backupurvm-client.service.
+
+Package: backupurvm-client
+Version: 0.0.0+git.bf96cde
 Architecture: arm64
 Maintainer: hdmain <noreply@github.com>
 Installed-Size: 3528
 Depends: systemd
-Filename: pool/main/backupurvm-client_0.1.0_arm64.deb
-Size: 1249894
-MD5sum: 0ab80f4eea47f77d696ac6d9c8238362
-SHA1: ca4deb6cc46be17bfb452dc3688675e0c587d3f0
-SHA256: d0beb919cb9cdd84e6874fb8ee24dcdd52ee5ff7df7adabd87118300dcb2052b
+Filename: pool/main/backupurvm-client_0.0.0+git.bf96cde_arm64.deb
+Size: 1262296
+MD5sum: fc474707675a704264fd3e1430a23a03
+SHA1: d9be13468bb252da7f9ad17a6cf87f74d4f8f321
+SHA256: db5cd2b34f0543071d1840cfc2096aab9de49d2f8e0f1af55d75e6d00b71b596
 Section: admin
 Priority: optional
 Homepage: https://github.com/hdmain/backupurvm
@@ -28,6 +47,25 @@ Size: 1378966
 MD5sum: 3fae9df04059cc88d85d52abd21eaf4b
 SHA1: a58821b3c9e1777c8f4ffa0283be52aa1f1819ac
 SHA256: 03cd55ded89c2002529d1115350d3f9ecbe7dcd25cd26641fcf2818e8325c428
+Section: admin
+Priority: optional
+Homepage: https://github.com/hdmain/backupurvm
+Description: backupurvm VPS backup agent
+ Long-running Linux agent that connects to a backupurvm host over
+ tcpduplex, waits for backup commands, and uploads /root (or configured
+ source) archives. Ships a systemd unit: backupurvm-client.service.
+
+Package: backupurvm-client
+Version: 0.1.0
+Architecture: arm64
+Maintainer: hdmain <noreply@github.com>
+Installed-Size: 3528
+Depends: systemd
+Filename: pool/main/backupurvm-client_0.1.0_arm64.deb
+Size: 1249894
+MD5sum: 0ab80f4eea47f77d696ac6d9c8238362
+SHA1: ca4deb6cc46be17bfb452dc3688675e0c587d3f0
+SHA256: d0beb919cb9cdd84e6874fb8ee24dcdd52ee5ff7df7adabd87118300dcb2052b
 Section: admin
 Priority: optional
 Homepage: https://github.com/hdmain/backupurvm
