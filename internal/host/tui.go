@@ -32,6 +32,12 @@ const (
 
 type tickMsg time.Time
 
+type downloadReadyMsg struct {
+	url   string
+	err   error
+	label string // "selected" or "latest"
+}
+
 type tuiModel struct {
 	panel *SSHPanel
 	sess  ssh.Session
@@ -225,6 +231,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, tickCmd()
+	case downloadReadyMsg:
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+			m.status = "Download failed"
+			return m, nil
+		}
+		m.errMsg = ""
+		m.status = "DOWNLOAD  " + msg.url
+		m.panel.log.Printf("TUI: download %s ready %s", msg.label, msg.url)
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -336,6 +352,8 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.sendSelectedCmd(protocol.CmdPing)
 		case "d", "D":
 			return m.toggleDownload()
+		case "l", "L":
+			return m.toggleDownloadLatest()
 		case "tab":
 			m.screen = screenMain
 			m.tab = tabOverview
@@ -413,6 +431,8 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.sendSelectedCmd(protocol.CmdPing)
 	case "d", "D":
 		return m.toggleDownload()
+	case "l", "L":
+		return m.toggleDownloadLatest()
 	}
 	return m, nil
 }
@@ -560,7 +580,7 @@ func (m tuiModel) toggleDownload() (tea.Model, tea.Cmd) {
 		m.errMsg = "download server unavailable"
 		return m, nil
 	}
-	if m.panel.downloads.Active() {
+	if m.panel.downloads.Active() || m.panel.downloads.Building() {
 		m.panel.downloads.Stop()
 		m.errMsg = ""
 		m.status = "Download server stopped."
@@ -568,7 +588,7 @@ func (m tuiModel) toggleDownload() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.screen != screenClient || len(m.backups) == 0 {
-		m.status = "Open a backup (Enter on a server) and select an archive, then press D."
+		m.status = "Open a server, select an archive, then press D — or L for latest full."
 		return m, nil
 	}
 	if m.cursor < 0 || m.cursor >= len(m.backups) {
@@ -591,6 +611,42 @@ func (m tuiModel) toggleDownload() (tea.Model, tea.Cmd) {
 	m.status = "DOWNLOAD  " + url
 	m.panel.log.Printf("TUI: download ready %s", url)
 	return m, nil
+}
+
+func (m tuiModel) toggleDownloadLatest() (tea.Model, tea.Cmd) {
+	if m.panel.downloads == nil {
+		m.errMsg = "download server unavailable"
+		return m, nil
+	}
+	if m.panel.downloads.Active() || m.panel.downloads.Building() {
+		m.panel.downloads.Stop()
+		m.errMsg = ""
+		m.status = "Download server stopped."
+		return m, nil
+	}
+	if m.screen != screenClient || m.selected.Client.ID == "" {
+		m.status = "Open a server (Enter), then press L to download latest full+incremental."
+		return m, nil
+	}
+	clientID := m.selected.Client.ID
+	compress := m.panel.store.Get().CompressPrefer
+	m.status = "Building latest full archive (full + incrementals)…"
+	m.errMsg = ""
+	panel := m.panel
+	return m, func() tea.Msg {
+		recs, err := panel.storage.ListBackups(clientID)
+		if err != nil {
+			return downloadReadyMsg{err: err, label: "latest"}
+		}
+		url, started, err := panel.downloads.ToggleLatest(recs, compress)
+		if err != nil {
+			return downloadReadyMsg{err: err, label: "latest"}
+		}
+		if !started {
+			return downloadReadyMsg{err: fmt.Errorf("download server stopped"), label: "latest"}
+		}
+		return downloadReadyMsg{url: url, label: "latest"}
+	}
 }
 
 func (m tuiModel) sendSelectedCmd(cmdName string) (tea.Model, tea.Cmd) {
@@ -936,7 +992,7 @@ func (m tuiModel) viewKeybinds(w int) string {
 	var kb string
 	switch {
 	case m.screen == screenClient:
-		kb = "  ↑/↓ backups   Esc back   D download   B/I/Shift+B backup cmds   S settings   U refresh   ? help"
+		kb = "  ↑/↓ backups   Esc back   D download   L latest full   B/I/Shift+B cmds   S settings   ? help"
 	case m.tab == tabSettings:
 		kb = "  ↑/↓ select   Enter edit   Esc back   U refresh   ? help   Q quit"
 	default:
@@ -1286,7 +1342,7 @@ func (m tuiModel) viewClient(w, h int) string {
 	if m.panel != nil && m.panel.downloads != nil {
 		if active, url, _ := m.panel.downloads.Info(); active {
 			b.WriteString(styleFull.Render("  DOWNLOAD  ") + truncateW(url, maxInt(10, w-12)) + "\n")
-			b.WriteString(styleDim.Render("  Press D again to stop the download server.") + "\n")
+			b.WriteString(styleDim.Render("  Press D or L again to stop the download server.") + "\n")
 		}
 	}
 	b.WriteByte('\n')
@@ -1356,7 +1412,8 @@ func (m tuiModel) viewHelp(w, h int) string {
 		"    Shift+B      Backup full",
 		"    I            Backup incremental",
 		"    P            Ping agent",
-		"    D            Download selected backup (toggle HTTP server)",
+		"    D            Download selected archive (toggle HTTP server)",
+		"    L            Download latest full (full + all incrementals merged)",
 		"    S            Open Settings",
 		"    Esc          Leave Settings (or back from history)",
 		"    F            Find a client by name, host, or id",
@@ -1364,9 +1421,11 @@ func (m tuiModel) viewHelp(w, h int) string {
 		"    Q            Quit (or leave Settings)",
 		"    ?            Help",
 		"",
-		"  Download (D on a backup row)",
-		"    Starts HTTP on a random port: http://PUBLIC_IP:PORT/UUID/FILENAME",
-		"    Public IP from ifconfig.com. Press D again to stop.",
+		"  Download",
+		"    D  Serve the selected archive as-is",
+		"    L  Rebuild latest state: last full + incremental changes → one archive",
+		"    URL: http://IPv4:PORT/UUID/FILENAME  (IP from ifconfig.com, IPv4 only)",
+		"    Press D or L again to stop the download server.",
 		"",
 		"  Settings extras",
 		"    Schedule time     Local HH:MM for auto backups (empty = any time)",
@@ -1391,8 +1450,11 @@ func (m tuiModel) statusLine(w int) string {
 		return styleErr.Render(truncateW(" ERROR: "+m.errMsg, w))
 	}
 	if m.panel != nil && m.panel.downloads != nil {
+		if m.panel.downloads.Building() {
+			return styleIncr.Render(truncateW(" Building latest full archive…", w))
+		}
 		if active, url, _ := m.panel.downloads.Info(); active && url != "" {
-			return styleFull.Render(truncateW(" DOWNLOAD  "+url+"  (D to stop)", w))
+			return styleFull.Render(truncateW(" DOWNLOAD  "+url+"  (D/L to stop)", w))
 		}
 	}
 	return styleStatusOK.Render(truncateW(" "+m.status, w))

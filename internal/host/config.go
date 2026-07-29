@@ -51,11 +51,11 @@ func DefaultConfig() Config {
 		SSHAuthorizedKeys:   nil,
 		CompressPrefer:      "zstd",
 		MaxBackupsPerClient: 30,
-		AutoBackup:            false,
-		AutoBackupEvery:       "24h",
-		AutoBackupAt:          "03:00",
-		AutoBackupMode:        "auto",
-		ArchiveOfflineAfter:   "3d",
+		AutoBackup:          false,
+		AutoBackupEvery:     "24h",
+		AutoBackupAt:        "03:00",
+		AutoBackupMode:      "auto",
+		ArchiveOfflineAfter: "3d",
 	}
 }
 

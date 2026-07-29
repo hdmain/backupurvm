@@ -67,7 +67,8 @@ ssh -p 2222 -o PreferredAuthentications=password -o PubkeyAuthentication=no admi
 | Enter | Open client / edit setting |
 | `b` / `B` / `i` | Backup auto / full / incremental |
 | `p` | Ping agent |
-| `D` | Download selected backup (HTTP link; press again to stop) |
+| `D` | Download selected archive (HTTP link; press again to stop) |
+| `L` | Download latest full (merges last full + incrementals) |
 | `?` | Help |
 | Tab | OVERVIEW ↔ CLIENTS |
 | S | Open Settings |

@@ -13,6 +13,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hdmain/backupurvm/internal/archive"
+	"github.com/hdmain/backupurvm/internal/protocol"
 )
 
 // DownloadHub serves a single backup archive over HTTP until toggled off.
@@ -25,7 +28,9 @@ type DownloadHub struct {
 	token    string
 	fileName string
 	filePath string
+	tempPath string // removed on Stop when set
 	active   bool
+	building bool
 }
 
 func NewDownloadHub(logger *log.Logger) *DownloadHub {
@@ -49,6 +54,13 @@ func (d *DownloadHub) URL() string {
 	return d.url
 }
 
+// Building reports whether a merged latest archive is being prepared.
+func (d *DownloadHub) Building() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.building
+}
+
 // Info returns active status, URL, and filename.
 func (d *DownloadHub) Info() (active bool, url, fileName string) {
 	d.mu.Lock()
@@ -57,10 +69,9 @@ func (d *DownloadHub) Info() (active bool, url, fileName string) {
 }
 
 // Toggle starts a download server for rec, or stops the current one if already active.
-// When starting, listenAddr should be like ":0" (random port).
 func (d *DownloadHub) Toggle(rec BackupRecord) (url string, started bool, err error) {
 	d.mu.Lock()
-	if d.active {
+	if d.active || d.building {
 		d.mu.Unlock()
 		d.Stop()
 		return "", false, nil
@@ -69,15 +80,78 @@ func (d *DownloadHub) Toggle(rec BackupRecord) (url string, started bool, err er
 	return d.Start(rec)
 }
 
+// ToggleLatest builds a merged full archive (full + incrementals) and serves it,
+// or stops the server if already active.
+func (d *DownloadHub) ToggleLatest(recs []BackupRecord, compress string) (url string, started bool, err error) {
+	d.mu.Lock()
+	if d.active || d.building {
+		d.mu.Unlock()
+		d.Stop()
+		return "", false, nil
+	}
+	d.building = true
+	d.mu.Unlock()
+
+	defer func() {
+		d.mu.Lock()
+		d.building = false
+		d.mu.Unlock()
+	}()
+
+	tmpDir, err := os.MkdirTemp("", "backupurvm-dl-*")
+	if err != nil {
+		return "", false, err
+	}
+	outName := "latest-full" + archive.ExtFor(compress)
+	if compress == "" {
+		outName = "latest-full" + archive.ExtFor(protocol.CompressZstd)
+	}
+	outPath := filepath.Join(tmpDir, outName)
+	rec, err := BuildLatestFullArchive(recs, outPath, compress)
+	if err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return "", false, err
+	}
+	// Prefer a stable friendly name.
+	friendly := sanitizeDownloadName(rec.ClientName)
+	if friendly == "" {
+		friendly = "backup"
+	}
+	finalName := friendly + "-latest-full" + archive.ExtFor(rec.Compress)
+	finalPath := filepath.Join(tmpDir, finalName)
+	if finalPath != outPath {
+		if err := os.Rename(outPath, finalPath); err != nil {
+			finalPath = outPath
+			finalName = filepath.Base(outPath)
+		} else {
+			rec.ArchivePath = finalPath
+		}
+	}
+	rec.ArchivePath = finalPath
+
+	url, started, err = d.startFile(rec.ArchivePath, finalName, true)
+	if err != nil || !started {
+		_ = os.RemoveAll(tmpDir)
+		return url, started, err
+	}
+	d.mu.Lock()
+	d.tempPath = finalPath
+	d.mu.Unlock()
+	return url, started, nil
+}
+
 // Start exposes rec.ArchivePath on a random port until Stop.
 func (d *DownloadHub) Start(rec BackupRecord) (url string, started bool, err error) {
+	return d.startFile(rec.ArchivePath, filepath.Base(rec.ArchivePath), false)
+}
+
+func (d *DownloadHub) startFile(path, fileName string, isTemp bool) (url string, started bool, err error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.active {
 		return d.url, true, nil
 	}
 
-	path := rec.ArchivePath
 	if path == "" {
 		return "", false, fmt.Errorf("backup has no archive path")
 	}
@@ -87,8 +161,10 @@ func (d *DownloadHub) Start(rec BackupRecord) (url string, started bool, err err
 		}
 		return "", false, fmt.Errorf("archive missing: %w", err)
 	}
+	if fileName == "" {
+		fileName = filepath.Base(path)
+	}
 
-	fileName := filepath.Base(path)
 	token, err := randomUUID()
 	if err != nil {
 		return "", false, err
@@ -108,12 +184,13 @@ func (d *DownloadHub) Start(rec BackupRecord) (url string, started bool, err err
 
 	mux := http.NewServeMux()
 	pattern := "/" + token + "/" + fileName
+	servePath := path
 	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		f, err := os.Open(path)
+		f, err := os.Open(servePath)
 		if err != nil {
 			http.Error(w, "file unavailable", http.StatusNotFound)
 			return
@@ -145,6 +222,9 @@ func (d *DownloadHub) Start(rec BackupRecord) (url string, started bool, err err
 	d.token = token
 	d.fileName = fileName
 	d.filePath = path
+	if isTemp {
+		d.tempPath = path
+	}
 	d.active = true
 
 	go func() {
@@ -166,25 +246,49 @@ func (d *DownloadHub) Stop() {
 	d.mu.Lock()
 	srv := d.srv
 	ln := d.ln
+	temp := d.tempPath
 	d.srv = nil
 	d.ln = nil
 	d.active = false
+	d.building = false
 	d.url = ""
 	d.token = ""
 	d.fileName = ""
 	d.filePath = ""
+	d.tempPath = ""
 	d.mu.Unlock()
 
-	if srv == nil {
-		return
+	if srv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = srv.Shutdown(ctx)
+		cancel()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(ctx)
 	if ln != nil {
 		_ = ln.Close()
 	}
+	if temp != "" {
+		_ = os.Remove(temp)
+		_ = os.RemoveAll(filepath.Dir(temp))
+	}
 	d.log.Printf("download server stopped")
+}
+
+func sanitizeDownloadName(s string) string {
+	s = strings.TrimSpace(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		case r == ' ', r == '.':
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 40 {
+		out = out[:40]
+	}
+	return out
 }
 
 func randomUUID() (string, error) {
@@ -237,10 +341,17 @@ func fetchPublicIP(timeout time.Duration) (string, error) {
 		if i := strings.IndexAny(ip, " \n\t\r<>"); i >= 0 {
 			ip = ip[:i]
 		}
-		if net.ParseIP(ip) != nil {
-			return ip, nil
+		parsed := net.ParseIP(ip)
+		if parsed == nil {
+			lastErr = fmt.Errorf("%s: not an IP: %q", u, truncateStr(ip, 40))
+			continue
 		}
-		lastErr = fmt.Errorf("%s: not an IP: %q", u, truncateStr(ip, 40))
+		v4 := parsed.To4()
+		if v4 == nil {
+			lastErr = fmt.Errorf("%s: IPv6 ignored (%s)", u, ip)
+			continue
+		}
+		return v4.String(), nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no public IP")

@@ -31,10 +31,10 @@ type Task struct {
 
 // TaskHub tracks in-flight and last-completed backup tasks for the TUI.
 type TaskHub struct {
-	mu        sync.RWMutex
-	running   map[string]*Task
-	lastDone  *Task
-	seq       uint64
+	mu       sync.RWMutex
+	running  map[string]*Task
+	lastDone *Task
+	seq      uint64
 }
 
 func NewTaskHub() *TaskHub {

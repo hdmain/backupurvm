@@ -289,11 +289,11 @@ func (s *Storage) DiskUsage() (clients int, backups int, bytes int64, err error)
 
 // ClientSummary is a client row with aggregate backup stats for the panel.
 type ClientSummary struct {
-	Client       ClientInfo
-	BackupCount  int
-	StoredBytes  int64
-	LastBackup   BackupRecord
-	LastMode     string
+	Client      ClientInfo
+	BackupCount int
+	StoredBytes int64
+	LastBackup  BackupRecord
+	LastMode    string
 }
 
 func (s *Storage) SummarizeClients() ([]ClientSummary, error) {

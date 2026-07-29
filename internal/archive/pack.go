@@ -33,11 +33,11 @@ type Meta struct {
 
 // PackOptions controls archive creation.
 type PackOptions struct {
-	Root       string
-	OutPath    string
-	Compress   string // zstd|gzip
-	Entries    []protocol.FileEntry // files/dirs to include (relative paths)
-	Meta       Meta
+	Root     string
+	OutPath  string
+	Compress string               // zstd|gzip
+	Entries  []protocol.FileEntry // files/dirs to include (relative paths)
+	Meta     Meta
 }
 
 // Pack creates a compressed tar at OutPath containing Meta plus listed entries.
@@ -116,10 +116,10 @@ func Pack(opts PackOptions) (int64, error) {
 
 func writeBytes(tw *tar.Writer, name string, data []byte, mode int64) error {
 	hdr := &tar.Header{
-		Name:    name,
-		Mode:    mode,
-		Size:    int64(len(data)),
-		ModTime: time.Now().UTC(),
+		Name:     name,
+		Mode:     mode,
+		Size:     int64(len(data)),
+		ModTime:  time.Now().UTC(),
 		Typeflag: tar.TypeReg,
 	}
 	if err := tw.WriteHeader(hdr); err != nil {
