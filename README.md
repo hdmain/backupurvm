@@ -5,6 +5,26 @@ Linux-only VPS backup system using [tcpduplex](https://github.com/hdmain/tcpdupl
 - **host** — receives backups, commands agents, SSH TUI admin panel
 - **client** — long-running agent (or `--once` backup) packing `/root` as `.tar.zst` / `.tar.gz`
 
+## Install
+
+### Debian / Ubuntu (apt)
+
+```bash
+echo "deb [trusted=yes] https://hdmain.github.io/backupurvm ./" \
+  | sudo tee /etc/apt/sources.list.d/backupurvm.list
+sudo apt update
+sudo apt install backupurvm-client
+```
+
+Then configure and start the systemd agent:
+
+```bash
+sudo nano /etc/backupurvm/client.env   # BACKUPURVM_HOST, SOURCE, NAME
+sudo nano /etc/backupurvm/backup.key  # same secret as host shared_key
+sudo systemctl enable --now backupurvm-client
+sudo journalctl -u backupurvm-client -f
+```
+
 ## Requirements
 
 - Linux (amd64/arm64)
@@ -76,26 +96,6 @@ auto_backup_mode: "auto"
 Keep `config.yml` and `data/` out of git — both are ignored. Use `config.yml.example` as the template.
 
 ## Client
-
-### Debian / Ubuntu (apt)
-
-Same style as [mdsys](https://github.com/hdmain/mdsys) — installs the agent binary and a **systemd** unit:
-
-```bash
-echo "deb [trusted=yes] https://hdmain.github.io/backupurvm ./" \
-  | sudo tee /etc/apt/sources.list.d/backupurvm.list
-sudo apt update
-sudo apt install backupurvm-client
-```
-
-Configure, then start the service:
-
-```bash
-sudo nano /etc/backupurvm/client.env   # BACKUPURVM_HOST, SOURCE, NAME
-sudo nano /etc/backupurvm/backup.key  # same secret as host shared_key (no trailing newline preferred)
-sudo systemctl enable --now backupurvm-client
-sudo journalctl -u backupurvm-client -f
-```
 
 | Path | Purpose |
 |------|---------|
