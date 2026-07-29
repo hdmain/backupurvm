@@ -37,16 +37,8 @@ jobs:
           ARCH: ${{ matrix.debarch }}
         run: |
           chmod +x scripts/build-deb-client.sh
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            export VERSION="${GITHUB_REF_NAME#v}"
-          else
-            HASH="$(git rev-parse --short HEAD)"
-            if DESC="$(git describe --tags --match 'v*' 2>/dev/null)"; then
-              export VERSION="${DESC#v}"
-            else
-              export VERSION="0.0.0+git.${HASH}"
-            fi
-          fi
+          # scripts/build-deb-client.sh picks an always-increasing version
+          # (tag vX.Y.Z, or 0.<commit-count>.0+g<hash>).
           ./scripts/build-deb-client.sh
 
       - name: Upload .deb artifact
@@ -99,6 +91,8 @@ jobs:
       - name: Publish apt repo
         run: |
           mkdir -p gh-pages/pool/main
+          # Keep only the newest debs so Packages stays clean.
+          rm -f gh-pages/pool/main/backupurvm-client_*.deb
           cp artifacts/*.deb gh-pages/pool/main/
           cd gh-pages
           dpkg-scanpackages --multiversion pool/ > Packages

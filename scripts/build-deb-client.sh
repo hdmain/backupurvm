@@ -4,17 +4,21 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [ -z "${VERSION:-}" ]; then
-	if DESC="$(git -C "$ROOT" describe --tags --match 'v*' --always 2>/dev/null)"; then
+	# Prefer annotated release tags (v1.2.3). Otherwise use an always-increasing
+	# 0.<commit-count>.0+g<hash> so apt upgrades beat older fixed versions like 0.1.0.
+	if DESC="$(git -C "$ROOT" describe --tags --exact-match --match 'v*' 2>/dev/null)"; then
 		VERSION="${DESC#v}"
 	else
-		VERSION="0.1.0"
+		COUNT="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
+		HASH="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+		VERSION="0.${COUNT}.0+g${HASH}"
 	fi
 fi
 VERSION="${VERSION#v}"
 # Debian versions must start with a digit.
 case "$VERSION" in
 [0-9]*) ;;
-*) VERSION="0.0.0+git.${VERSION}" ;;
+*) VERSION="0.0.0+g${VERSION}" ;;
 esac
 # Sanitize remaining chars for Debian version rules.
 VERSION="$(printf '%s' "$VERSION" | tr -c 'A-Za-z0-9.+~' '.')"
