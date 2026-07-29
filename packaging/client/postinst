@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+configure)
+	if [ ! -f /etc/backupurvm/client.env ]; then
+		cp /usr/share/backupurvm-client/client.env.example /etc/backupurvm/client.env
+		chmod 600 /etc/backupurvm/client.env
+	fi
+	if [ ! -f /etc/backupurvm/backup.key ]; then
+		umask 077
+		# Placeholder — replace with the same value as host shared_key.
+		printf '%s\n' 'change-me-shared-key' > /etc/backupurvm/backup.key
+		chmod 600 /etc/backupurvm/backup.key
+	fi
+
+	if command -v systemctl >/dev/null 2>&1; then
+		systemctl daemon-reload || true
+		systemctl enable backupurvm-client.service >/dev/null 2>&1 || true
+		# Do not start automatically until the operator sets HOST/key.
+		echo "backupurvm-client: edit /etc/backupurvm/client.env and /etc/backupurvm/backup.key,"
+		echo "  then: sudo systemctl start backupurvm-client"
+	fi
+	;;
+esac
+
+exit 0

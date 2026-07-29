@@ -1,0 +1,20 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+purge)
+	rm -f /etc/backupurvm/client.env /etc/backupurvm/backup.key
+	rmdir /etc/backupurvm 2>/dev/null || true
+	if command -v systemctl >/dev/null 2>&1; then
+		systemctl daemon-reload || true
+		systemctl reset-failed backupurvm-client.service >/dev/null 2>&1 || true
+	fi
+	;;
+remove)
+	if command -v systemctl >/dev/null 2>&1; then
+		systemctl daemon-reload || true
+	fi
+	;;
+esac
+
+exit 0

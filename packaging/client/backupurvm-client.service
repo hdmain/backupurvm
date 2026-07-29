@@ -1,0 +1,24 @@
+[Unit]
+Description=backupurvm backup agent
+Documentation=https://github.com/hdmain/backupurvm
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/backupurvm/client.env
+ExecStart=/usr/bin/backupurvm-client --connect ${BACKUPURVM_HOST} --key ${BACKUPURVM_KEY} --source ${BACKUPURVM_SOURCE} --name ${BACKUPURVM_NAME}
+Restart=always
+RestartSec=5
+# Agent needs read access to the source tree (default /root).
+User=root
+Nice=10
+
+# Hardening (keep /root readable for backups)
+ProtectSystem=false
+ProtectHome=false
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

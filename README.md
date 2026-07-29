@@ -77,6 +77,48 @@ Keep `config.yml` and `data/` out of git — both are ignored. Use `config.yml.e
 
 ## Client
 
+### Debian / Ubuntu (apt)
+
+Same style as [mdsys](https://github.com/hdmain/mdsys) — installs the agent binary and a **systemd** unit:
+
+```bash
+echo "deb [trusted=yes] https://hdmain.github.io/backupurvm ./" \
+  | sudo tee /etc/apt/sources.list.d/backupurvm.list
+sudo apt update
+sudo apt install backupurvm-client
+```
+
+Configure, then start the service:
+
+```bash
+sudo nano /etc/backupurvm/client.env   # BACKUPURVM_HOST, SOURCE, NAME
+sudo nano /etc/backupurvm/backup.key  # same secret as host shared_key (no trailing newline preferred)
+sudo systemctl enable --now backupurvm-client
+sudo journalctl -u backupurvm-client -f
+```
+
+| Path | Purpose |
+|------|---------|
+| `/usr/bin/backupurvm-client` | Agent binary |
+| `/lib/systemd/system/backupurvm-client.service` | systemd unit |
+| `/etc/backupurvm/client.env` | Host address, source path, display name |
+| `/etc/backupurvm/backup.key` | Shared key (must match host `shared_key`) |
+
+One-liner from a GitHub Release `.deb` (no apt repo):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/hdmain/backupurvm/main/install_client.sh | sudo bash
+```
+
+Build a local `.deb`:
+
+```bash
+./scripts/build-deb-client.sh   # → dist/backupurvm-client_<ver>_<arch>.deb
+sudo apt install ./dist/backupurvm-client_*.deb
+```
+
+### Manual / from source
+
 Create a key file with the **same** secret as host `shared_key`:
 
 ```bash
