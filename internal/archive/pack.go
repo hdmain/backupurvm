@@ -170,8 +170,26 @@ func addEntry(tw *tar.Writer, root string, ent protocol.FileEntry) error {
 		return err
 	}
 	defer f.Close()
-	_, err = io.Copy(tw, f)
-	return err
+	// Limit to the header size so a file that grows while packing (e.g. live
+	// logs) cannot trigger archive/tar: write too long.
+	n, err := io.Copy(tw, io.LimitReader(f, hdr.Size))
+	if err != nil {
+		return err
+	}
+	if n < hdr.Size {
+		// File shrunk between stat and read — pad so the tar entry is exact.
+		_, err = io.CopyN(tw, zeroReader{}, hdr.Size-n)
+		return err
+	}
+	return nil
+}
+
+// zeroReader yields an endless stream of zero bytes.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }
 
 // ExtFor returns the filename extension for a compression type.
