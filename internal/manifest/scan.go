@@ -4,12 +4,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hdmain/backupurvm/internal/protocol"
@@ -17,13 +20,17 @@ import (
 
 // Scan walks root and builds a sorted file inventory. Symlinks are recorded as
 // zero-size entries; regular files are optionally hashed.
+// Inaccessible paths (dead FUSE mounts, permission errors, I/O errors) are skipped.
 func Scan(root string, hashFiles bool) ([]protocol.FileEntry, error) {
 	root = filepath.Clean(root)
 	var entries []protocol.FileEntry
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			if os.IsPermission(err) || os.IsNotExist(err) {
+			if skipWalkError(err) {
+				if d != nil && d.IsDir() {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			return err
@@ -82,6 +89,46 @@ func Scan(root string, hashFiles bool) ([]protocol.FileEntry, error) {
 		return entries[i].Path < entries[j].Path
 	})
 	return entries, nil
+}
+
+// skipWalkError reports whether a walk/open error should be ignored so one
+// broken mount (e.g. FUSE ENOTCONN) does not abort the whole backup.
+func skipWalkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsPermission(err) || os.IsNotExist(err) || errors.Is(err, fs.ErrPermission) || errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		switch errno {
+		case syscall.ENOTCONN, // transport endpoint is not connected (dead FUSE)
+			syscall.EIO,
+			syscall.ESTALE,
+			syscall.ENOENT,
+			syscall.EACCES,
+			syscall.EPERM,
+			syscall.ENODEV,
+			syscall.ENXIO,
+			syscall.ELOOP:
+			return true
+		}
+	}
+	// Fallback for wrapped / stringly errors from some filesystems.
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"transport endpoint is not connected",
+		"input/output error",
+		"stale file handle",
+		"no such device",
+		"host is down",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func hashFile(path string) (string, error) {

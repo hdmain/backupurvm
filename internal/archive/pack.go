@@ -4,11 +4,13 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hdmain/backupurvm/internal/protocol"
@@ -138,6 +140,9 @@ func addEntry(tw *tar.Writer, root string, ent protocol.FileEntry) error {
 
 	info, err := os.Lstat(full)
 	if err != nil {
+		if skipPackError(err) {
+			return nil
+		}
 		return err
 	}
 
@@ -145,6 +150,9 @@ func addEntry(tw *tar.Writer, root string, ent protocol.FileEntry) error {
 	if info.Mode()&os.ModeSymlink != 0 {
 		link, err = os.Readlink(full)
 		if err != nil {
+			if skipPackError(err) {
+				return nil
+			}
 			return err
 		}
 	}
@@ -167,6 +175,11 @@ func addEntry(tw *tar.Writer, root string, ent protocol.FileEntry) error {
 	}
 	f, err := os.Open(full)
 	if err != nil {
+		if skipPackError(err) {
+			// Header already written — pad with zeros so the tar stays valid.
+			_, err = io.CopyN(tw, zeroReader{}, hdr.Size)
+			return err
+		}
 		return err
 	}
 	defer f.Close()
@@ -174,6 +187,10 @@ func addEntry(tw *tar.Writer, root string, ent protocol.FileEntry) error {
 	// logs) cannot trigger archive/tar: write too long.
 	n, err := io.Copy(tw, io.LimitReader(f, hdr.Size))
 	if err != nil {
+		if skipPackError(err) && n < hdr.Size {
+			_, err = io.CopyN(tw, zeroReader{}, hdr.Size-n)
+			return err
+		}
 		return err
 	}
 	if n < hdr.Size {
@@ -182,6 +199,28 @@ func addEntry(tw *tar.Writer, root string, ent protocol.FileEntry) error {
 		return err
 	}
 	return nil
+}
+
+func skipPackError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsPermission(err) || os.IsNotExist(err) {
+		return true
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		switch errno {
+		case syscall.ENOTCONN, syscall.EIO, syscall.ESTALE,
+			syscall.ENOENT, syscall.EACCES, syscall.EPERM,
+			syscall.ENODEV, syscall.ENXIO:
+			return true
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "transport endpoint is not connected") ||
+		strings.Contains(msg, "input/output error") ||
+		strings.Contains(msg, "stale file handle")
 }
 
 // zeroReader yields an endless stream of zero bytes.
