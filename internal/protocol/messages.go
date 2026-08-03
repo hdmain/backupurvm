@@ -126,7 +126,8 @@ type FileEntry struct {
 type Plan struct {
 	Mode           string      `json:"mode"`
 	BaseBackupID   string      `json:"base_backup_id,omitempty"`
-	LastManifest   []FileEntry `json:"last_manifest,omitempty"`
+	LastManifest   []FileEntry `json:"last_manifest,omitempty"` // legacy small manifests
+	ManifestZstd   []byte      `json:"manifest_zstd,omitempty"` // preferred: zstd(JSON FileEntry[])
 	CompressPrefer string      `json:"compress_prefer"`
 }
 
@@ -160,8 +161,8 @@ type BackupFail struct {
 
 // Command is sent by the host to a connected agent.
 type Command struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
 	WantMode string `json:"want_mode,omitempty"` // for backup_* aliases
 }
 

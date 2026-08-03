@@ -75,9 +75,7 @@ func (s *BackupServer) ListenAndServe(ctx context.Context) error {
 			defer cancel()
 
 			live := s.store.Get()
-			tdCfg := tcpduplex.DefaultConfig()
-			tdCfg.Handshake.PreSharedKey = []byte(live.SharedKey)
-			tdCfg.MaxMessageBytes = 1 << 20
+			tdCfg := common.DuplexConfig([]byte(live.SharedKey))
 
 			conn, err := tcpduplex.ServeConnContext(peerCtx, nc, tdCfg)
 			if err != nil {
@@ -313,7 +311,11 @@ func (s *BackupServer) buildPlan(clientID string, req protocol.PlanReq) (protoco
 	}
 	if mode == protocol.ModeIncremental {
 		plan.BaseBackupID = lastID
-		plan.LastManifest = manifest
+		blob, err := protocol.EncodeManifestZstd(manifest)
+		if err != nil {
+			return protocol.Plan{}, fmt.Errorf("compress manifest: %w", err)
+		}
+		plan.ManifestZstd = blob
 	}
 	return plan, nil
 }

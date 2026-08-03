@@ -100,9 +100,7 @@ func runSession(ctx context.Context, opts Options, role string) error {
 		return fmt.Errorf("empty key file")
 	}
 
-	cfg := tcpduplex.DefaultConfig()
-	cfg.Handshake.PreSharedKey = key
-	cfg.MaxMessageBytes = 1 << 20
+	cfg := common.DuplexConfig(key)
 
 	conn, err := tcpduplex.DialContext(ctx, opts.Addr, cfg)
 	if err != nil {
@@ -302,7 +300,11 @@ func doBackup(ctx context.Context, conn *tcpduplex.Conn, opts Options, wantMode 
 	case protocol.ModeFull:
 		toPack = current
 	case protocol.ModeIncremental:
-		toPack, deleted = manifest.Diff(plan.LastManifest, current)
+		prev, err := protocol.PlanManifest(plan)
+		if err != nil {
+			return fmt.Errorf("plan manifest: %w", err)
+		}
+		toPack, deleted = manifest.Diff(prev, current)
 		opts.Logger.Printf("incremental: %d changed, %d deleted (of %d total)", len(toPack), len(deleted), len(current))
 		if len(toPack) == 0 && len(deleted) == 0 {
 			opts.Logger.Printf("nothing to backup")
