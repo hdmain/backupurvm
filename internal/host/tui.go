@@ -211,7 +211,7 @@ func (m tuiModel) Init() tea.Cmd {
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1239,7 +1239,7 @@ func (m tuiModel) bodyClients(w, h int) string {
 			relTime(c.LastSeen),
 			s.BackupCount,
 			common.FormatBytes(s.StoredBytes),
-			len(c.Manifest),
+			c.FileCount,
 		)
 		row = truncateW(row, w)
 		if i == m.cursor {
@@ -1338,7 +1338,7 @@ func (m tuiModel) viewClient(w, h int) string {
 	b.WriteString(styleDetailKey.Render("  Client") + "  " + c.Name + "  (" + c.Hostname + ")\n")
 	b.WriteString(styleDetailKey.Render("  ID    ") + "  " + c.ID + "\n")
 	b.WriteString(styleDetailKey.Render("  Chain ") + fmt.Sprintf("  %d archives · %s on disk · %d files in latest manifest\n",
-		m.selected.BackupCount, common.FormatBytes(m.selected.StoredBytes), len(c.Manifest)))
+		m.selected.BackupCount, common.FormatBytes(m.selected.StoredBytes), c.FileCount))
 	if m.panel != nil && m.panel.downloads != nil {
 		if active, url, _ := m.panel.downloads.Info(); active {
 			b.WriteString(styleFull.Render("  DOWNLOAD  ") + truncateW(url, maxInt(10, w-12)) + "\n")

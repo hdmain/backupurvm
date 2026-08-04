@@ -194,32 +194,27 @@ func (s *BackupServer) handleAgent(ctx context.Context, cancel context.CancelFun
 		s.log.Printf("agent offline: %s (%s)", hello.ClientName, hello.Hostname)
 	}()
 
-	for {
-		// Prefer queued host commands when idle.
-		if !peer.Busy {
+	// Forward host commands without polling Receive on a short timeout
+	// (that busy-woke every agent ~2×/sec and burned CPU when idle).
+	go func() {
+		for {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return
 			case cmd := <-peer.cmdCh:
 				s.log.Printf("command → %s: %s", hello.ClientName, cmd.Name)
 				if err := s.send(conn, protocol.TypeCommand, cmd); err != nil {
-					return err
+					s.log.Printf("command send to %s failed: %v", hello.ClientName, err)
+					cancel()
+					return
 				}
-				continue
-			default:
 			}
 		}
+	}()
 
-		recvCtx, recvCancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		msg, err := conn.ReceiveContext(recvCtx)
-		recvCancel()
+	for {
+		msg, err := conn.ReceiveContext(ctx)
 		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if recvCtx.Err() == context.DeadlineExceeded {
-				continue
-			}
 			return err
 		}
 		s.peers.Touch(clientID)

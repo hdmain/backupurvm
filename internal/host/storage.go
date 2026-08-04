@@ -37,7 +37,18 @@ type ClientInfo struct {
 	Hostname     string               `json:"hostname"`
 	LastSeen     time.Time            `json:"last_seen"`
 	LastBackupID string               `json:"last_backup_id,omitempty"`
+	FileCount    int                  `json:"file_count,omitempty"`
 	Manifest     []protocol.FileEntry `json:"manifest,omitempty"`
+}
+
+// clientInfoLite is used for TUI listings so we do not unmarshal huge manifests.
+type clientInfoLite struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Hostname     string    `json:"hostname"`
+	LastSeen     time.Time `json:"last_seen"`
+	LastBackupID string    `json:"last_backup_id,omitempty"`
+	FileCount    int       `json:"file_count,omitempty"`
 }
 
 // Storage manages on-disk backups under DataDir/clients/<id>/.
@@ -94,6 +105,9 @@ func (s *Storage) loadClientLocked(clientID string) (ClientInfo, error) {
 	var info ClientInfo
 	if err := json.Unmarshal(b, &info); err != nil {
 		return ClientInfo{}, err
+	}
+	if info.FileCount == 0 && len(info.Manifest) > 0 {
+		info.FileCount = len(info.Manifest)
 	}
 	return info, nil
 }
@@ -177,6 +191,7 @@ func (s *Storage) CommitBackup(rec BackupRecord, fullManifest []protocol.FileEnt
 	info.LastSeen = time.Now().UTC()
 	info.LastBackupID = rec.ID
 	info.Manifest = fullManifest
+	info.FileCount = len(fullManifest)
 	if err := s.saveClientLocked(info); err != nil {
 		return err
 	}
@@ -201,6 +216,50 @@ func (s *Storage) ListClients() ([]ClientInfo, error) {
 		info, err := s.loadClientLocked(e.Name())
 		if err != nil {
 			continue
+		}
+		if info.ID == "" {
+			info.ID = e.Name()
+		}
+		out = append(out, info)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].LastSeen.After(out[j].LastSeen)
+	})
+	return out, nil
+}
+
+// ListClientsLite lists clients without unmarshaling file manifests (TUI hot path).
+func (s *Storage) ListClientsLite() ([]ClientInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []ClientInfo
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		path := filepath.Join(s.clientDir(e.Name()), "client.json")
+		b, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var lite clientInfoLite
+		if err := json.Unmarshal(b, &lite); err != nil {
+			continue
+		}
+		info := ClientInfo{
+			ID:           lite.ID,
+			Name:         lite.Name,
+			Hostname:     lite.Hostname,
+			LastSeen:     lite.LastSeen,
+			LastBackupID: lite.LastBackupID,
+			FileCount:    lite.FileCount,
 		}
 		if info.ID == "" {
 			info.ID = e.Name()
@@ -297,7 +356,7 @@ type ClientSummary struct {
 }
 
 func (s *Storage) SummarizeClients() ([]ClientSummary, error) {
-	clients, err := s.ListClients()
+	clients, err := s.ListClientsLite()
 	if err != nil {
 		return nil, err
 	}
