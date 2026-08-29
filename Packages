@@ -1,14 +1,14 @@
 Package: backupurvm-client
-Version: 0.17.0+g9c745c5
-Architecture: amd64
+Version: 0.18.0+g459c0d2
+Architecture: arm64
 Maintainer: hdmain <noreply@github.com>
-Installed-Size: 3900
+Installed-Size: 3784
 Depends: systemd
-Filename: pool/main/backupurvm-client_0.17.0+g9c745c5_amd64.deb
-Size: 1496050
-MD5sum: 9a56d61fae3c943ec2c149c475756e5b
-SHA1: 47b74a6a063623c32de129c6c5ca3040ec95ed61
-SHA256: 9643c69b9e30ce61e1d93be1374851713004c4d09762e7ce3ed584e4256de5d6
+Filename: pool/main/backupurvm-client_0.18.0+g459c0d2_arm64.deb
+Size: 1357464
+MD5sum: 5eadfaeb917a59137d298cb948b93f58
+SHA1: e14e6b3a9167649c6b42a24c4b3766a892272b39
+SHA256: 6f71fcfc09756f536f1f3f6973b9f06299a412d7e0d588e7d4b8d3679989736f
 Section: admin
 Priority: optional
 Homepage: https://github.com/hdmain/backupurvm
@@ -18,16 +18,16 @@ Description: backupurvm VPS backup agent
  source) archives. Ships a systemd unit: backupurvm-client.service.
 
 Package: backupurvm-client
-Version: 0.17.0+g9c745c5
-Architecture: arm64
+Version: 0.18.0+g459c0d2
+Architecture: amd64
 Maintainer: hdmain <noreply@github.com>
-Installed-Size: 3784
+Installed-Size: 3904
 Depends: systemd
-Filename: pool/main/backupurvm-client_0.17.0+g9c745c5_arm64.deb
-Size: 1356442
-MD5sum: d5bbc26f55854cf460ced7f2dc65fe42
-SHA1: b19d4dba2c78304ecb266effcfcd67320f6c3b2b
-SHA256: 5719c520a2db18615add137d7b07893fd8d463e5c0572e74c0f3d79840ba2e36
+Filename: pool/main/backupurvm-client_0.18.0+g459c0d2_amd64.deb
+Size: 1497164
+MD5sum: 9c62d63c41a019e44820f335069aad93
+SHA1: 78340f79439071266bf095ef7e05a0cfe22f109b
+SHA256: 71db365520e9d0b784e75f7e96162bda5e170236a33e5a0c02d4011cfc2054c6
 Section: admin
 Priority: optional
 Homepage: https://github.com/hdmain/backupurvm
