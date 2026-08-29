@@ -84,9 +84,11 @@ func normalizeOpts(opts *Options) error {
 	if opts.SourceRoot == "" {
 		opts.SourceRoot = "/root"
 	}
-	if opts.TempDir == "" {
-		opts.TempDir = os.TempDir()
+	dir, err := resolveTempDir(opts.TempDir)
+	if err != nil {
+		return err
 	}
+	opts.TempDir = dir
 	return nil
 }
 
@@ -336,6 +338,10 @@ func doBackup(ctx context.Context, conn *tcpduplex.Conn, opts Options, wantMode 
 	}
 	if mode == protocol.ModeFull {
 		meta.Files = current
+	}
+
+	if err := checkPackSpace(opts.TempDir, toPack); err != nil {
+		return err
 	}
 
 	ext := archive.ExtFor(compress)

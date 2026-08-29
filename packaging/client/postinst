@@ -14,6 +14,9 @@ configure)
 		chmod 600 /etc/backupurvm/backup.key
 	fi
 
+	mkdir -p /var/tmp/backupurvm
+	chmod 700 /var/tmp/backupurvm
+
 	if command -v systemctl >/dev/null 2>&1; then
 		systemctl daemon-reload || true
 		systemctl enable backupurvm-client.service >/dev/null 2>&1 || true

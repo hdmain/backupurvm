@@ -108,7 +108,7 @@ Keep `config.yml` and `data/` out of git — both are ignored. Use `config.yml.e
 |------|---------|
 | `/usr/bin/backupurvm-client` | Agent binary |
 | `/lib/systemd/system/backupurvm-client.service` | systemd unit |
-| `/etc/backupurvm/client.env` | Host address, source path, display name |
+| `/etc/backupurvm/client.env` | Host address, source path, display name, optional temp dir |
 | `/etc/backupurvm/backup.key` | Shared key (must match host `shared_key`) |
 
 One-liner from a GitHub Release `.deb` (no apt repo):
@@ -169,7 +169,7 @@ From the host SSH panel, select a server and press:
 | `--source` | Directory to backup (default `/root`) |
 | `--compress` | `zstd` or `gzip` |
 | `--name` | Client display name |
-| `--temp` | Temp dir for packing |
+| `--temp` | Temp dir for packing (default `/var/tmp/backupurvm`; env `BACKUPURVM_TEMP`) |
 
 ## Backup behavior
 
