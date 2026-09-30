@@ -9,6 +9,7 @@ compress_prefer: "zstd"
 max_backups_per_client: 30
 auto_backup: false
 auto_backup_every: "24h"
-auto_backup_at: "03:00"
+# empty = run anytime the interval elapses; "03:00" = only in a ~45m window after that local time
+auto_backup_at: ""
 auto_backup_mode: "auto"
 archive_offline_after: "3d"

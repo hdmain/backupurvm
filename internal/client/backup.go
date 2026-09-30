@@ -157,7 +157,7 @@ func agentLoop(ctx context.Context, conn *tcpduplex.Conn, opts Options, name, ho
 	)
 
 	go func() {
-		t := time.NewTicker(20 * time.Second)
+		t := time.NewTicker(90 * time.Second)
 		defer t.Stop()
 		for {
 			select {

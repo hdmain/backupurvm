@@ -2,6 +2,7 @@ package host
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -315,16 +316,81 @@ func (s *Storage) PruneBackups(clientID string, keep int) (int, error) {
 	if len(recs) <= keep {
 		return 0, nil
 	}
+
+	keepSet := backupsToKeep(recs, keep)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	removed := 0
-	for _, rec := range recs[keep:] {
+	for _, rec := range recs {
+		if keepSet[rec.ID] {
+			continue
+		}
 		_ = os.Remove(rec.ArchivePath)
 		meta := filepath.Join(s.clientDir(clientID), "backups", rec.ID+".json")
 		_ = os.Remove(meta)
 		removed++
 	}
 	return removed, nil
+}
+
+// backupsToKeep selects the newest `keep` backups, then expands the set with
+// every BaseBackupID ancestor so incremental chains stay mergeable.
+// The live chain may exceed `keep` when an older full is still required.
+func backupsToKeep(recs []BackupRecord, keep int) map[string]bool {
+	byID := make(map[string]BackupRecord, len(recs))
+	for _, r := range recs {
+		byID[r.ID] = r
+	}
+	out := make(map[string]bool)
+	n := keep
+	if n > len(recs) {
+		n = len(recs)
+	}
+	for _, r := range recs[:n] {
+		out[r.ID] = true
+	}
+	changed := true
+	for changed {
+		changed = false
+		for id := range out {
+			r := byID[id]
+			base := strings.TrimSpace(r.BaseBackupID)
+			if r.Mode == protocol.ModeFull || base == "" {
+				continue
+			}
+			if _, ok := byID[base]; ok && !out[base] {
+				out[base] = true
+				changed = true
+			}
+		}
+	}
+	return out
+}
+
+// ChainIntact reports whether the newest backup can be merged (full..latest
+// present on disk). Empty client is considered intact (next backup will be full).
+func (s *Storage) ChainIntact(clientID string) (bool, string) {
+	recs, err := s.ListBackups(clientID)
+	if err != nil {
+		return false, err.Error()
+	}
+	if len(recs) == 0 {
+		return true, ""
+	}
+	chain, err := ResolveBackupChain(recs)
+	if err != nil {
+		return false, err.Error()
+	}
+	for _, r := range chain {
+		if r.ArchivePath == "" {
+			return false, fmt.Sprintf("backup %s has no archive path", r.ID)
+		}
+		if st, err := os.Stat(r.ArchivePath); err != nil || st.IsDir() {
+			return false, fmt.Sprintf("archive missing for %s (%s)", r.ID, r.ArchivePath)
+		}
+	}
+	return true, ""
 }
 
 func (s *Storage) DiskUsage() (clients int, backups int, bytes int64, err error) {
@@ -381,7 +447,7 @@ func (s *Storage) SummarizeClients() ([]ClientSummary, error) {
 
 // RecentBackups returns the newest backups across all clients (newest first).
 func (s *Storage) RecentBackups(limit int) ([]BackupRecord, error) {
-	clients, err := s.ListClients()
+	clients, err := s.ListClientsLite()
 	if err != nil {
 		return nil, err
 	}

@@ -16,8 +16,10 @@ func RunAutoBackupScheduler(ctx context.Context, store *ConfigStore, peers *Peer
 		logger = log.Default()
 	}
 	var lastRun time.Time
+	var lastLog time.Time
 
-	ticker := time.NewTicker(15 * time.Second)
+	// 1m is enough for schedule windows and keeps idle host quiet on small VPS.
+	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
 	for {
@@ -34,38 +36,74 @@ func RunAutoBackupScheduler(ctx context.Context, store *ConfigStore, peers *Peer
 				logger.Printf("auto backup: invalid interval %q (min 1m)", cfg.AutoBackupEvery)
 				continue
 			}
-			if !lastRun.IsZero() && time.Since(lastRun) < every {
-				continue
-			}
 			if _, _, _, err := ParseClockHHMM(cfg.AutoBackupAt); err != nil {
 				logger.Printf("auto backup: invalid schedule time %q (use HH:MM)", cfg.AutoBackupAt)
 				continue
 			}
-			if !scheduleTimeAllows(cfg.AutoBackupAt, time.Now()) {
+			now := time.Now()
+			if !scheduleDue(cfg.AutoBackupAt, every, now, lastRun) {
 				continue
 			}
 			cmd := autoBackupCommand(cfg.AutoBackupMode)
 			sent, skipped := peers.BroadcastCommand(cmd)
-			if sent > 0 || skipped > 0 {
+			if sent > 0 {
 				logger.Printf("auto backup: sent %s to %d agent(s) (skipped %d)", cmd, sent, skipped)
+				lastRun = now
+				continue
 			}
-			// Advance schedule even if nobody was online, so we don't stampede later.
-			lastRun = time.Now()
+			// Nobody online: in timed window keep retrying without burning the day;
+			// in interval-only mode advance so we don't stampede when they reconnect.
+			if strings.TrimSpace(cfg.AutoBackupAt) == "" {
+				lastRun = now
+				if now.Sub(lastLog) > 30*time.Minute {
+					logger.Printf("auto backup: no online agents (next in %s)", every)
+					lastLog = now
+				}
+				continue
+			}
+			if now.Sub(lastLog) > 10*time.Minute {
+				logger.Printf("auto backup: window open, no online agents yet (will retry)")
+				lastLog = now
+			}
 		}
 	}
 }
 
-// scheduleTimeAllows is true when AutoBackupAt is empty, or local clock is in that minute.
-func scheduleTimeAllows(at string, now time.Time) bool {
-	hour, min, ok, err := ParseClockHHMM(at)
+// scheduleDue reports whether an auto-backup should fire now.
+//
+//   - auto_backup_at empty: true when `every` has elapsed since lastRun
+//   - auto_backup_at set: true in a 45-minute window starting at HH:MM local,
+//     if lastRun was before today's scheduled instant (and `every` elapsed)
+func scheduleDue(at string, every time.Duration, now, lastRun time.Time) bool {
+	if every < time.Minute {
+		return false
+	}
+	if !lastRun.IsZero() && now.Sub(lastRun) < every {
+		return false
+	}
+	hour, min, set, err := ParseClockHHMM(at)
 	if err != nil {
 		return false
 	}
-	if !ok {
-		return true // empty = any time
+	if !set {
+		return true
 	}
 	local := now.Local()
-	return local.Hour() == hour && local.Minute() == min
+	scheduled := time.Date(local.Year(), local.Month(), local.Day(), hour, min, 0, 0, local.Location())
+	windowEnd := scheduled.Add(45 * time.Minute)
+	if local.Before(scheduled) || !local.Before(windowEnd) {
+		return false
+	}
+	// Already succeeded (or interval-advanced) after today's slot opened.
+	if !lastRun.IsZero() && !lastRun.Before(scheduled) {
+		return false
+	}
+	return true
+}
+
+// scheduleTimeAllows is kept for tests/compat: exact-minute or empty.
+func scheduleTimeAllows(at string, now time.Time) bool {
+	return scheduleDue(at, time.Minute, now, time.Time{})
 }
 
 func autoBackupCommand(mode string) string {

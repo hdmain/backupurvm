@@ -299,6 +299,14 @@ func (s *BackupServer) buildPlan(clientID string, req protocol.PlanReq) (protoco
 	if mode == protocol.ModeIncremental && (len(manifest) == 0 || lastID == "") {
 		mode = protocol.ModeFull
 	}
+	// If the on-disk full→incremental chain is broken (e.g. prune deleted the
+	// base full), force a new full so restore/--latest can work again.
+	if mode == protocol.ModeIncremental {
+		if ok, reason := s.storage.ChainIntact(clientID); !ok {
+			s.log.Printf("client %s: forcing full backup (%s)", clientID, reason)
+			mode = protocol.ModeFull
+		}
+	}
 
 	plan := protocol.Plan{
 		Mode:           mode,

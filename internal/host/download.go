@@ -22,6 +22,7 @@ import (
 type DownloadHub struct {
 	mu       sync.Mutex
 	log      *log.Logger
+	TempDir  string // parent for merge work + output (default: os.TempDir)
 	srv      *http.Server
 	ln       net.Listener
 	url      string
@@ -38,6 +39,13 @@ func NewDownloadHub(logger *log.Logger) *DownloadHub {
 		logger = log.Default()
 	}
 	return &DownloadHub{log: logger}
+}
+
+func (d *DownloadHub) workParent() string {
+	if d.TempDir != "" {
+		return d.TempDir
+	}
+	return os.TempDir()
 }
 
 // Active reports whether a download server is running.
@@ -83,6 +91,15 @@ func (d *DownloadHub) Toggle(rec BackupRecord) (url string, started bool, err er
 // ToggleLatest builds a merged full archive (full + incrementals) and serves it,
 // or stops the server if already active.
 func (d *DownloadHub) ToggleLatest(recs []BackupRecord, compress string) (url string, started bool, err error) {
+	return d.toggleMerged(recs, compress, false)
+}
+
+// ToggleSalvage merges remaining incrementals without a full base (partial tree).
+func (d *DownloadHub) ToggleSalvage(recs []BackupRecord, compress string) (url string, started bool, err error) {
+	return d.toggleMerged(recs, compress, true)
+}
+
+func (d *DownloadHub) toggleMerged(recs []BackupRecord, compress string, salvage bool) (url string, started bool, err error) {
 	d.mu.Lock()
 	if d.active || d.building {
 		d.mu.Unlock()
@@ -98,33 +115,40 @@ func (d *DownloadHub) ToggleLatest(recs []BackupRecord, compress string) (url st
 		d.mu.Unlock()
 	}()
 
-	tmpDir, err := os.MkdirTemp("", "backupurvm-dl-*")
+	tmpDir, err := os.MkdirTemp(d.workParent(), "backupurvm-dl-*")
 	if err != nil {
 		return "", false, err
 	}
-	outName := "latest-full" + archive.ExtFor(compress)
+	label := "latest-full"
+	if salvage {
+		label = "salvage-partial"
+	}
+	outName := label + archive.ExtFor(compress)
 	if compress == "" {
-		outName = "latest-full" + archive.ExtFor(protocol.CompressZstd)
+		outName = label + archive.ExtFor(protocol.CompressZstd)
 	}
 	outPath := filepath.Join(tmpDir, outName)
-	rec, err := BuildLatestFullArchive(recs, outPath, compress)
+	var rec BackupRecord
+	opts := MergeOptions{WorkDir: d.workParent()}
+	if salvage {
+		rec, err = BuildSalvageArchive(recs, outPath, compress, opts)
+	} else {
+		rec, err = BuildLatestFullArchive(recs, outPath, compress, opts)
+	}
 	if err != nil {
 		_ = os.RemoveAll(tmpDir)
 		return "", false, err
 	}
-	// Prefer a stable friendly name.
 	friendly := sanitizeDownloadName(rec.ClientName)
 	if friendly == "" {
 		friendly = "backup"
 	}
-	finalName := friendly + "-latest-full" + archive.ExtFor(rec.Compress)
+	finalName := friendly + "-" + label + archive.ExtFor(rec.Compress)
 	finalPath := filepath.Join(tmpDir, finalName)
 	if finalPath != outPath {
 		if err := os.Rename(outPath, finalPath); err != nil {
 			finalPath = outPath
 			finalName = filepath.Base(outPath)
-		} else {
-			rec.ArchivePath = finalPath
 		}
 	}
 	rec.ArchivePath = finalPath

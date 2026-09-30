@@ -53,7 +53,7 @@ func DefaultConfig() Config {
 		MaxBackupsPerClient: 30,
 		AutoBackup:          false,
 		AutoBackupEvery:     "24h",
-		AutoBackupAt:        "03:00",
+		AutoBackupAt:        "", // empty = any time (interval only); "03:00" = daily window
 		AutoBackupMode:      "auto",
 		ArchiveOfflineAfter: "3d",
 	}

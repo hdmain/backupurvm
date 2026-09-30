@@ -160,7 +160,7 @@ func (m *tuiModel) reload() {
 		{Section: "Backup", Key: "key_id", Label: "Key fingerprint", Value: common.KeyID([]byte(cfg.SharedKey)), Editable: false},
 
 		{Section: "Auto backup", Key: "auto_backup", Label: "Enabled", Value: onOff(cfg.AutoBackup), Hint: "on or off", Editable: true},
-		{Section: "Auto backup", Key: "auto_backup_at", Label: "Schedule time", Value: scheduleTimeLabel(cfg.AutoBackupAt), Hint: "HH:MM local, or empty for any time", Editable: true},
+		{Section: "Auto backup", Key: "auto_backup_at", Label: "Schedule time", Value: scheduleTimeLabel(cfg.AutoBackupAt), Hint: "HH:MM → ~45m window; empty = anytime", Editable: true},
 		{Section: "Auto backup", Key: "auto_backup_every", Label: "Interval", Value: cfg.AutoBackupEvery, Hint: "e.g. 1h, 6h, 24h, 3d (min 1m)", Editable: true},
 		{Section: "Auto backup", Key: "auto_backup_mode", Label: "Mode", Value: cfg.AutoBackupMode, Hint: "auto, full, or incremental", Editable: true},
 
@@ -211,7 +211,8 @@ func (m tuiModel) Init() tea.Cmd {
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+	// Slow refresh — SummarizeClients hits disk; 1-core VPS cannot afford 2–5s polls.
+	return tea.Tick(30*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1428,7 +1429,7 @@ func (m tuiModel) viewHelp(w, h int) string {
 		"    Press D or L again to stop the download server.",
 		"",
 		"  Settings extras",
-		"    Schedule time     Local HH:MM for auto backups (empty = any time)",
+		"    Schedule time     Local HH:MM → ~45m window (empty = anytime / interval only)",
 		"    Archive offline   Move servers offline longer than this to Archived",
 		"",
 		"  Press any key to return.",

@@ -46,6 +46,11 @@ func NewSSHPanel(store *ConfigStore, storage *Storage, tasks *TaskHub, peers *Pe
 
 func (p *SSHPanel) ListenAndServe() error {
 	cfg := p.store.Get()
+	if p.downloads != nil && p.downloads.TempDir == "" {
+		tmp := filepath.Join(cfg.DataDir, "tmp")
+		_ = os.MkdirAll(tmp, 0o755)
+		p.downloads.TempDir = tmp
+	}
 	if err := ensureHostKey(cfg.SSHHostKeyPath); err != nil {
 		return err
 	}

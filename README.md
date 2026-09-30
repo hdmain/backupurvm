@@ -42,12 +42,28 @@ go build -o bin/client ./cmd/client
 cp config.yml.example config.yml
 # edit shared_key and ssh_password
 ./bin/host -config config.yml
+# same as: ./bin/host serve -config config.yml
 ```
 
 | Port (default) | Purpose |
 |----------------|---------|
 | `:9090` | tcpduplex backup listener |
 | `:2222` | SSH admin TUI |
+
+### Host CLI (no SSH)
+
+List servers and expose an HTTP download link from the machine running the host (same `config.yml` / `data/`):
+
+```bash
+./bin/host clients
+./bin/host backups myvps
+./bin/host download myvps                    # newest single archive → prints URL
+./bin/host download myvps --backup 20260829  # specific archive (id prefix OK)
+./bin/host download myvps --latest           # merge last full + incrementals
+./bin/host download myvps --latest --timeout 1h
+```
+
+The download command prints the public URL on stdout and keeps serving until Ctrl+C (or `--timeout`). Same tokenized HTTP link as the SSH panel `D` / `L` keys.
 
 SSH login opens the host panel:
 
@@ -84,7 +100,7 @@ Set `ssh_password: ""` to disable password login (keys only).
 | Setting | Meaning |
 |---------|---------|
 | Enabled | `on` / `off` — schedule backups for all online agents |
-| Schedule time | Local `HH:MM` when backups run (empty = any time) |
+| Schedule time | Local `HH:MM` — run in a ~45m window after that time (empty = anytime / interval only) |
 | Interval | Go duration, e.g. `1h`, `6h`, `24h`, `3d` (minimum `1m`) |
 | Mode | `auto`, `full`, or `incremental` |
 
@@ -93,7 +109,7 @@ Or in `config.yml`:
 ```yaml
 auto_backup: true
 auto_backup_every: "24h"
-auto_backup_at: "03:00"
+auto_backup_at: ""          # or "03:00" for a nightly window
 auto_backup_mode: "auto"
 archive_offline_after: "3d"
 ```
